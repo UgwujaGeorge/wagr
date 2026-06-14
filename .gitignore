@@ -10,6 +10,7 @@ coverage/
 *.tsbuildinfo
 __pycache__/
 *.pyc
+.vercel/
 
 contracts/base/cache/
 contracts/base/out/
@@ -18,3 +19,4 @@ contracts/base/broadcast/
 
 *.log
 .DS_Store
+.vercel
