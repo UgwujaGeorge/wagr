@@ -36,7 +36,7 @@ const config: RelayerConfig = {
 
 test('UNRESOLVED does not submit a verdict to Base', async () => {
   const storage = createMemoryStorage()
-  storage.saveMetadata(createMetadata('1'))
+  await storage.saveMetadata(createMetadata('1'))
   let baseSubmitCount = 0
 
   const app = createRelayerApp({
@@ -62,14 +62,14 @@ test('UNRESOLVED does not submit a verdict to Base', async () => {
   assert.equal(body.baseTxHash, undefined)
   assert.match(body.baseSubmitError, /UNRESOLVED/)
   assert.match(body.nextStep, /retried/)
-  assert.equal(storage.getResolution(baseSepolia.id, '1')?.baseSubmitted, false)
+  assert.equal((await storage.getResolution(baseSepolia.id, '1'))?.baseSubmitted, false)
 })
 
 test('YES and NO verdicts submit to Base', async (t) => {
   for (const verdict of ['YES', 'NO'] as const) {
     await t.test(`${verdict} submits`, async () => {
       const storage = createMemoryStorage()
-      storage.saveMetadata(createMetadata('7'))
+      await storage.saveMetadata(createMetadata('7'))
       const submitted: Array<{ chainId: BaseChainId; duelId: bigint; verdict: string; confidence: number; hash: `0x${string}` }> = []
 
       const app = createRelayerApp({
@@ -94,14 +94,14 @@ test('YES and NO verdicts submit to Base', async (t) => {
       assert.equal(body.baseSubmitted, true)
       assert.equal(body.baseTxHash, baseTxHash)
       assert.equal(body.nextStep, 'Verdict submitted to Base.')
-      assert.equal(storage.getResolution(baseSepolia.id, '7')?.verdict.verdict, verdict)
+      assert.equal((await storage.getResolution(baseSepolia.id, '7'))?.verdict.verdict, verdict)
     })
   }
 })
 
 test('bad GenLayer transaction hash returns a clean error', async () => {
   const storage = createMemoryStorage()
-  storage.saveMetadata(createMetadata('3'))
+  await storage.saveMetadata(createMetadata('3'))
   let readCalled = false
 
   const app = createRelayerApp({
@@ -131,7 +131,7 @@ test('bad GenLayer transaction hash returns a clean error', async () => {
 
 test('unsupported chain ID is rejected before Base submission', async () => {
   const storage = createMemoryStorage()
-  storage.saveMetadata(createMetadata('5'))
+  await storage.saveMetadata(createMetadata('5'))
   let baseSubmitCount = 0
 
   const app = createRelayerApp({
@@ -162,7 +162,7 @@ test('unsupported chain ID is rejected before Base submission', async () => {
 
 test('missing chain ID is rejected before Base submission', async () => {
   const storage = createMemoryStorage()
-  storage.saveMetadata(createMetadata('6'))
+  await storage.saveMetadata(createMetadata('6'))
   let baseSubmitCount = 0
 
   const app = createRelayerApp({
@@ -193,7 +193,7 @@ test('missing chain ID is rejected before Base submission', async () => {
 
 test('unresolved GenLayer transaction lookup returns a clean JSON error', async () => {
   const storage = createMemoryStorage()
-  storage.saveMetadata(createMetadata('4'))
+  await storage.saveMetadata(createMetadata('4'))
   let baseSubmitCount = 0
 
   const app = createRelayerApp({
@@ -225,17 +225,17 @@ function createMemoryStorage(): RelayerStorage {
   const resolutions = new Map<string, StoredResolution>()
 
   return {
-    getMetadata: (chainId, duelId) => metadata.get(`${chainId}:${duelId}`),
-    getResolution: (chainId, duelId) => resolutions.get(`${chainId}:${duelId}`),
-    listMetadata: (chainId) => {
+    getMetadata: async (chainId, duelId) => metadata.get(`${chainId}:${duelId}`),
+    getResolution: async (chainId, duelId) => resolutions.get(`${chainId}:${duelId}`),
+    listMetadata: async (chainId) => {
       const items = [...metadata.values()]
       return chainId ? items.filter((item) => item.chainId === chainId) : items
     },
-    saveMetadata: (item) => {
+    saveMetadata: async (item) => {
       metadata.set(`${item.chainId}:${item.duelId}`, item)
       return item
     },
-    saveResolution: (item) => {
+    saveResolution: async (item) => {
       resolutions.set(`${item.chainId}:${item.duelId}`, item)
       return item
     },

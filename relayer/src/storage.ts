@@ -1,6 +1,7 @@
 import './env.js'
 import { dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { Pool } from 'pg'
 import { baseSepolia, isSupportedBaseChainId, type BaseChainId, type DuelMetadata, type GenLayerVerdict } from '@wagr/shared'
 
 export interface StoredDuelMetadata extends DuelMetadata {
@@ -24,14 +25,24 @@ export interface StoredResolution {
   mock: boolean
 }
 
+type MaybePromise<T> = T | Promise<T>
+
 const metadataByDuel = new Map<string, StoredDuelMetadata>()
 const resolutionByDuel = new Map<string, StoredResolution>()
 const dataFile = process.env.RELAYER_DATA_FILE || '.wagr-relayer-data.json'
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    })
+  : undefined
 
 interface RelayerDataFile {
   metadata: StoredDuelMetadata[]
   resolutions: StoredResolution[]
 }
+
+let databaseReady: Promise<void> | undefined
 
 function loadFromDisk() {
   if (!existsSync(dataFile)) return
@@ -60,30 +71,110 @@ function persistToDisk() {
   writeFileSync(dataFile, `${JSON.stringify(data, null, 2)}\n`)
 }
 
-loadFromDisk()
-
-export function saveMetadata(metadata: StoredDuelMetadata): StoredDuelMetadata {
-  metadataByDuel.set(duelKey(metadata.chainId, metadata.duelId), metadata)
-  persistToDisk()
-  return metadata
+async function ensureReady() {
+  if (!pool) return
+  if (!databaseReady) {
+    databaseReady = loadFromDatabase()
+  }
+  await databaseReady
 }
 
-export function getMetadata(chainId: BaseChainId, duelId: string): StoredDuelMetadata | undefined {
+async function loadFromDatabase() {
+  await pool!.query(`
+    CREATE TABLE IF NOT EXISTS relayer_metadata (
+      chain_id integer NOT NULL,
+      duel_id text NOT NULL,
+      payload jsonb NOT NULL,
+      PRIMARY KEY (chain_id, duel_id)
+    )
+  `)
+  await pool!.query(`
+    CREATE TABLE IF NOT EXISTS relayer_resolutions (
+      chain_id integer NOT NULL,
+      duel_id text NOT NULL,
+      payload jsonb NOT NULL,
+      PRIMARY KEY (chain_id, duel_id)
+    )
+  `)
+
+  const metadataRows = await pool!.query<{ chain_id: number; duel_id: string; payload: StoredDuelMetadata }>(
+    'SELECT chain_id, duel_id, payload FROM relayer_metadata',
+  )
+  metadataByDuel.clear()
+  for (const row of metadataRows.rows) {
+    const normalized = normalizeMetadata({ ...row.payload, chainId: row.chain_id as BaseChainId, duelId: row.duel_id })
+    metadataByDuel.set(duelKey(normalized.chainId, normalized.duelId), normalized)
+  }
+
+  const resolutionRows = await pool!.query<{ chain_id: number; duel_id: string; payload: StoredResolution }>(
+    'SELECT chain_id, duel_id, payload FROM relayer_resolutions',
+  )
+  resolutionByDuel.clear()
+  for (const row of resolutionRows.rows) {
+    const normalized = normalizeResolution({ ...row.payload, chainId: row.chain_id as BaseChainId, duelId: row.duel_id })
+    resolutionByDuel.set(duelKey(normalized.chainId, normalized.duelId), normalized)
+  }
+}
+
+loadFromDisk()
+
+export async function saveMetadata(metadata: StoredDuelMetadata): Promise<StoredDuelMetadata> {
+  await ensureReady()
+  const normalized = normalizeMetadata(metadata)
+  metadataByDuel.set(duelKey(normalized.chainId, normalized.duelId), normalized)
+
+  if (pool) {
+    await pool.query(
+      `
+        INSERT INTO relayer_metadata (chain_id, duel_id, payload)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (chain_id, duel_id)
+        DO UPDATE SET payload = EXCLUDED.payload
+      `,
+      [normalized.chainId, normalized.duelId, normalized],
+    )
+  } else {
+    persistToDisk()
+  }
+
+  return normalized
+}
+
+export async function getMetadata(chainId: BaseChainId, duelId: string): Promise<StoredDuelMetadata | undefined> {
+  await ensureReady()
   return metadataByDuel.get(duelKey(chainId, duelId))
 }
 
-export function listMetadata(chainId?: BaseChainId): StoredDuelMetadata[] {
+export async function listMetadata(chainId?: BaseChainId): Promise<StoredDuelMetadata[]> {
+  await ensureReady()
   const items = [...metadataByDuel.values()]
   return chainId ? items.filter((item) => item.chainId === chainId) : items
 }
 
-export function saveResolution(resolution: StoredResolution): StoredResolution {
-  resolutionByDuel.set(duelKey(resolution.chainId, resolution.duelId), resolution)
-  persistToDisk()
-  return resolution
+export async function saveResolution(resolution: StoredResolution): Promise<StoredResolution> {
+  await ensureReady()
+  const normalized = normalizeResolution(resolution)
+  resolutionByDuel.set(duelKey(normalized.chainId, normalized.duelId), normalized)
+
+  if (pool) {
+    await pool.query(
+      `
+        INSERT INTO relayer_resolutions (chain_id, duel_id, payload)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (chain_id, duel_id)
+        DO UPDATE SET payload = EXCLUDED.payload
+      `,
+      [normalized.chainId, normalized.duelId, normalized],
+    )
+  } else {
+    persistToDisk()
+  }
+
+  return normalized
 }
 
-export function getResolution(chainId: BaseChainId, duelId: string): StoredResolution | undefined {
+export async function getResolution(chainId: BaseChainId, duelId: string): Promise<StoredResolution | undefined> {
+  await ensureReady()
   return resolutionByDuel.get(duelKey(chainId, duelId))
 }
 

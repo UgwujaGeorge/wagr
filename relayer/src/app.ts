@@ -8,11 +8,11 @@ import type { StoredDuelMetadata, StoredResolution } from './storage.js'
 type SubmittedVerdict = Exclude<GenLayerVerdict['verdict'], 'UNRESOLVED'>
 
 export interface RelayerStorage {
-  getMetadata(chainId: BaseChainId, duelId: string): StoredDuelMetadata | undefined
-  getResolution(chainId: BaseChainId, duelId: string): StoredResolution | undefined
-  listMetadata(chainId?: BaseChainId): StoredDuelMetadata[]
-  saveMetadata(metadata: StoredDuelMetadata): StoredDuelMetadata
-  saveResolution(resolution: StoredResolution): StoredResolution
+  getMetadata(chainId: BaseChainId, duelId: string): Promise<StoredDuelMetadata | undefined> | StoredDuelMetadata | undefined
+  getResolution(chainId: BaseChainId, duelId: string): Promise<StoredResolution | undefined> | StoredResolution | undefined
+  listMetadata(chainId?: BaseChainId): Promise<StoredDuelMetadata[]> | StoredDuelMetadata[]
+  saveMetadata(metadata: StoredDuelMetadata): Promise<StoredDuelMetadata> | StoredDuelMetadata
+  saveResolution(resolution: StoredResolution): Promise<StoredResolution> | StoredResolution
 }
 
 export interface RelayerAppDeps {
@@ -63,9 +63,9 @@ export function createRelayerApp(deps: RelayerAppDeps) {
     }),
   )
 
-  app.get('/metadata', (c) => {
+  app.get('/metadata', async (c) => {
     const chainId = parseOptionalChainId(c.req.query('chainId'))
-    return c.json({ items: storage.listMetadata(chainId) })
+    return c.json({ items: await storage.listMetadata(chainId) })
   })
 
   app.post('/metadata', async (c) => {
@@ -74,19 +74,19 @@ export function createRelayerApp(deps: RelayerAppDeps) {
     if (parsed.creatorSide === parsed.counterpartySide) {
       return c.json({ error: 'counterpartySide must be the opposite side' }, 400)
     }
-    return c.json(storage.saveMetadata(parsed), 201)
+    return c.json(await storage.saveMetadata(parsed), 201)
   })
 
-  app.get('/metadata/:duelId', (c) => {
+  app.get('/metadata/:duelId', async (c) => {
     const chainId = parseRequiredChainId(c.req.query('chainId'))
-    const item = storage.getMetadata(chainId, c.req.param('duelId'))
+    const item = await storage.getMetadata(chainId, c.req.param('duelId'))
     if (!item) return c.json({ error: 'metadata not found' }, 404)
     return c.json(item)
   })
 
-  app.get('/resolution/:duelId', (c) => {
+  app.get('/resolution/:duelId', async (c) => {
     const chainId = parseRequiredChainId(c.req.query('chainId'))
-    const item = storage.getResolution(chainId, c.req.param('duelId'))
+    const item = await storage.getResolution(chainId, c.req.param('duelId'))
     if (!item) return c.json({ error: 'resolution not found' }, 404)
     return c.json(item)
   })
@@ -96,7 +96,7 @@ export function createRelayerApp(deps: RelayerAppDeps) {
       const duelId = c.req.param('duelId')
       const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
       const chainId = parseRequiredChainId(body.chainId)
-      const metadata = storage.getMetadata(chainId, duelId)
+      const metadata = await storage.getMetadata(chainId, duelId)
       if (!metadata) return c.json({ error: 'metadata not found' }, 404)
 
       const genlayerTxHash = parseGenLayerTxHash(body)
@@ -124,7 +124,7 @@ export function createRelayerApp(deps: RelayerAppDeps) {
         }
       }
 
-      const stored = storage.saveResolution({
+      const stored = await storage.saveResolution({
         chainId,
         duelId,
         verdict: result.verdict,
