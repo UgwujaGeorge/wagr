@@ -8,6 +8,8 @@ build/
 .vite/
 coverage/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 contracts/base/cache/
 contracts/base/out/
