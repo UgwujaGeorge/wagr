@@ -1,0 +1,26 @@
+{
+  "name": "wagr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PvP prediction battles resolved by GenLayer.",
+  "workspaces": [
+    "frontend",
+    "relayer",
+    "shared"
+  ],
+  "scripts": {
+    "build": "npm run build -w @wagr/shared && npm run build -w @wagr/relayer && npm run build -w @wagr/frontend",
+    "dev:frontend": "npm run dev -w @wagr/frontend",
+    "dev:relayer": "npm run dev -w @wagr/relayer",
+    "relayer:test": "npm run test -w @wagr/relayer",
+    "contracts:test": "forge test --root contracts/base",
+    "contracts:build": "forge build --root contracts/base",
+    "contracts:deploy:base-sepolia": "bash scripts/deploy-base-sepolia.sh",
+    "contracts:dry-run:base-mainnet": "bash scripts/dry-run-base-mainnet.sh",
+    "contracts:deploy:base-mainnet": "bash scripts/deploy-base-mainnet.sh",
+    "deploy:base-sepolia": "npm run contracts:deploy:base-sepolia",
+    "deploy:base-mainnet": "npm run contracts:deploy:base-mainnet",
+    "genlayer:schema": "node scripts/check-genlayer-resolver-schema.mjs",
+    "genlayer:deploy": "node scripts/deploy-genlayer-resolver.mjs"
+  }
+}

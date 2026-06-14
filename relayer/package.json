@@ -1,0 +1,27 @@
+{
+  "name": "@wagr/relayer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/app.test.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.4",
+    "@wagr/shared": "file:../shared",
+    "dotenv": "^17.4.2",
+    "genlayer-js": "^1.1.8",
+    "hono": "^4.12.23",
+    "viem": "^2.51.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "tsx": "^4.22.3",
+    "typescript": "^5.9.3"
+  }
+}
