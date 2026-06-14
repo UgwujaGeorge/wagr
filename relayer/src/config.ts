@@ -40,7 +40,7 @@ function optionalPrivateKey(name: string): `0x${string}` | undefined {
 
 export function loadConfig(): RelayerConfig {
   return {
-    port: Number(process.env.RELAYER_PORT || 8787),
+    port: Number(process.env.PORT || process.env.RELAYER_PORT || 8787),
     baseNetworks: {
       [baseSepolia.id]: {
         chainId: baseSepolia.id,

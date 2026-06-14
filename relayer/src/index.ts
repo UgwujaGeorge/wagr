@@ -26,6 +26,6 @@ serve(
     port: config.port,
   },
   (info) => {
-    console.log(`Wagr relayer listening on http://localhost:${info.port}`)
+    console.log(`Wagr relayer listening on port ${info.port}`)
   },
 )
