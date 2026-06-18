@@ -13,6 +13,22 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: BASE_SEPOLIA_RPC_URL
+        value: https://sepolia.base.org
+      - key: BASE_MAINNET_RPC_URL
+        value: https://mainnet.base.org
+      - key: BASE_SEPOLIA_ESCROW_ADDRESS
+        value: 0xF109bA06578792D624F45a4E67f8aB4f44693D39
+      - key: BASE_MAINNET_ESCROW_ADDRESS
+        value: 0x602d022B9E9c415F399F77d5be69404F2219dc99
+      - key: GENLAYER_NETWORK
+        value: studionet
+      - key: GENLAYER_RPC_URL
+        value: https://studio.genlayer.com/api
+      - key: GENLAYER_EXPLORER_URL
+        value: https://explorer-studio.genlayer.com
+      - key: GENLAYER_RESOLVER_ADDRESS
+        value: 0x9d0A580Fc57F1F429b00F6c7d20Cf62C2Ba3cceb
       - key: DATABASE_URL
         fromDatabase:
           name: wagr-relayer-db
