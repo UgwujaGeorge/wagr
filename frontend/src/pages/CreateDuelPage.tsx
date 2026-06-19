@@ -3,10 +3,12 @@ import { wagrDuelEscrowAbi } from '@wagr/shared'
 import { keccak256, parseEther, parseEventLogs, stringToHex } from 'viem'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { WrongNetworkModal } from '../components/WrongNetworkModal'
 import { getBaseTxUrl, getEscrowAddress, hasEscrowAddress } from '../lib/contracts'
 import { oppositeSide } from '../lib/duels'
 import { useBaseNetwork } from '../lib/network'
 import { saveDuelMetadata, type StoredDuelMetadata } from '../lib/relayer'
+import { describeUiError, isWrongNetworkError, logUiError } from '../lib/uiErrors'
 
 export function CreateDuelPage() {
   const navigate = useNavigate()
@@ -27,6 +29,7 @@ export function CreateDuelPage() {
   const [savedDuelId, setSavedDuelId] = useState<string>()
   const [relayerError, setRelayerError] = useState<string>()
   const [walletActionError, setWalletActionError] = useState<string>()
+  const [wrongNetworkModalOpen, setWrongNetworkModalOpen] = useState(false)
   const { writeContract, isPending, data, error } = useWriteContract()
   const { data: receipt, isLoading: isConfirming } = useWaitForTransactionReceipt({ hash: data })
 
@@ -43,10 +46,27 @@ export function CreateDuelPage() {
 
   const metadataHash = useMemo(() => keccak256(stringToHex(JSON.stringify(metadata))), [metadata])
 
+  useEffect(() => {
+    if (error) {
+      logUiError('Create duel transaction error', error)
+    }
+  }, [error])
+
   async function ensureSelectedBaseChain() {
     if (address && walletChainId !== selectedChainId) {
-      await switchChainAsync({ chainId: selectedChainId })
+      try {
+        await switchChainAsync({ chainId: selectedChainId })
+      } catch (switchError) {
+        logUiError('Failed to switch Base network', switchError)
+        if (isWrongNetworkError(switchError)) {
+          setWrongNetworkModalOpen(true)
+          return false
+        }
+        setWalletActionError(describeUiError(switchError))
+        return false
+      }
     }
+    return true
   }
 
   async function onSubmit(event: FormEvent) {
@@ -59,7 +79,8 @@ export function CreateDuelPage() {
     setWalletActionError(undefined)
     setSavedDuelId(undefined)
     try {
-      await ensureSelectedBaseChain()
+      const switched = await ensureSelectedBaseChain()
+      if (!switched) return
       setPendingMetadata({
         ...metadata,
         chainId: selectedChainId,
@@ -68,16 +89,26 @@ export function CreateDuelPage() {
         counterpartySide: side === 'YES' ? 'NO' : 'YES',
         metadataHash,
       })
-      writeContract({
-        chainId: selectedChainId,
-        address: contractAddress,
-        abi: wagrDuelEscrowAbi,
-        functionName: 'createDuel',
-        args: [side === 'YES' ? 1 : 2, BigInt(expirySeconds), metadataHash],
-        value: parseEther(stake),
-      })
+      try {
+        writeContract({
+          chainId: selectedChainId,
+          address: contractAddress,
+          abi: wagrDuelEscrowAbi,
+          functionName: 'createDuel',
+          args: [side === 'YES' ? 1 : 2, BigInt(expirySeconds), metadataHash],
+          value: parseEther(stake),
+        })
+      } catch (writeError) {
+        logUiError('Failed to submit duel creation transaction', writeError)
+        if (isWrongNetworkError(writeError)) {
+          setWrongNetworkModalOpen(true)
+          return
+        }
+        setWalletActionError(describeUiError(writeError))
+      }
     } catch (switchError) {
-      setWalletActionError(switchError instanceof Error ? switchError.message : `Could not switch wallet to ${selectedNetwork.label}.`)
+      logUiError('Unexpected duel creation error', switchError)
+      setWalletActionError(describeUiError(switchError))
     }
   }
 
@@ -103,7 +134,8 @@ export function CreateDuelPage() {
         setSavedDuelId(duelId)
         navigate(`/duels/${duelId}`)
       } catch (metadataError) {
-        setRelayerError(metadataError instanceof Error ? metadataError.message : String(metadataError))
+        logUiError('Failed to save relayer metadata', metadataError)
+        setRelayerError(describeUiError(metadataError))
       }
     }
 
@@ -178,7 +210,7 @@ export function CreateDuelPage() {
           )}
           {!address && <p className="warning-text">Connect a wallet to create this duel.</p>}
           {walletActionError && <p className="warning-text">{walletActionError}</p>}
-          {error && <p className="warning-text">{error.message}</p>}
+          {error && <p className="warning-text">{describeUiError(error)}</p>}
           {data && (
             <p className="success-text">
               Transaction submitted:{' '}
@@ -228,6 +260,22 @@ export function CreateDuelPage() {
           <Link className="secondary-action full" to="/explore">View existing duels</Link>
         </aside>
       </div>
+      <WrongNetworkModal
+        isOpen={wrongNetworkModalOpen}
+        isSwitching={isSwitchingBase}
+        onCancel={() => setWrongNetworkModalOpen(false)}
+        onSwitch={async () => {
+          try {
+            await switchChainAsync({ chainId: selectedChainId })
+            setWrongNetworkModalOpen(false)
+          } catch (switchError) {
+            logUiError('Wrong network modal switch failed', switchError)
+            if (!isWrongNetworkError(switchError)) {
+              setWalletActionError(describeUiError(switchError))
+            }
+          }
+        }}
+      />
     </div>
   )
 }

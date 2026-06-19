@@ -2,6 +2,7 @@ import { Check, ChevronDown, Wallet, WifiOff } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useAccount, useChainId, useConnect, useDisconnect, useSwitchChain } from 'wagmi'
 import { useBaseNetwork } from '../lib/network'
+import { describeUiError, logUiError } from '../lib/uiErrors'
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
@@ -84,6 +85,12 @@ export function WalletButton() {
     }
   }, [isPending])
 
+  useEffect(() => {
+    if (error) {
+      logUiError('Wallet connection error', error)
+    }
+  }, [error])
+
   const walletOptions = useMemo(
     () => {
       const optionsByKey = new Map<
@@ -164,7 +171,7 @@ export function WalletButton() {
                 </button>
               ))}
             </div>
-            {error ? <p>{error.message}</p> : null}
+            {error ? <p>{describeUiError(error)}</p> : null}
           </div>
         )}
       </div>

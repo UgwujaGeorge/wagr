@@ -1,39 +1,65 @@
+import { useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Trophy } from 'lucide-react'
 import { VerdictPanel } from '../components/VerdictPanel'
-import { demoDuels, oppositeSide } from '../lib/duels'
+import { oppositeSide } from '../lib/duels'
+import { useLiveDuel } from '../lib/duelData'
 import { useBaseNetwork } from '../lib/network'
-import { getDuelMetadata, getResolution } from '../lib/relayer'
+import { getResolution } from '../lib/relayer'
+import { describeUiError, logUiError } from '../lib/uiErrors'
 
 export function ResultPage() {
   const { duelId } = useParams()
   const { selectedChainId, selectedNetwork } = useBaseNetwork()
-  const metadataQuery = useQuery({
-    queryKey: ['metadata', selectedChainId, duelId],
-    queryFn: () => getDuelMetadata(selectedChainId, duelId!),
-    enabled: Boolean(duelId),
-    retry: false,
-  })
+  const { duel, error, isLoading } = useLiveDuel(selectedChainId, duelId)
   const resolutionQuery = useQuery({
     queryKey: ['resolution', selectedChainId, duelId],
     queryFn: () => getResolution(selectedChainId, duelId!),
     enabled: Boolean(duelId),
     retry: false,
   })
-  const demoDuel = demoDuels.find((item) => item.id === duelId) || demoDuels[2]
-  const duel = metadataQuery.data
-    ? {
-        ...demoDuel,
-        id: metadataQuery.data.duelId,
-        claim: metadataQuery.data.claim,
-        creatorSide: metadataQuery.data.creatorSide,
-        resolutionRules: metadataQuery.data.resolutionRules,
-        evidenceUrls: metadataQuery.data.evidenceUrls,
-        verdict: resolutionQuery.data?.verdict,
-      }
-    : demoDuel
-  const verdict = duel.verdict?.verdict
+
+  useEffect(() => {
+    if (error) {
+      logUiError('Failed to load result duel data', error)
+    }
+  }, [error])
+
+  useEffect(() => {
+    if (resolutionQuery.error) {
+      logUiError('Failed to load result resolution', resolutionQuery.error)
+    }
+  }, [resolutionQuery.error])
+
+  if (isLoading && !duel) {
+    return (
+      <div className="page result-layout">
+        <section className="panel result-summary">
+          <span className="eyebrow">Resolution on {selectedNetwork.label}</span>
+          <h1>Loading</h1>
+          <p>Fetching duel results.</p>
+        </section>
+      </div>
+    )
+  }
+
+  if (!duel) {
+    return (
+      <div className="page result-layout">
+        <section className="panel result-summary">
+          <span className="eyebrow">Resolution on {selectedNetwork.label}</span>
+          <h1>Not found</h1>
+          <p>{error ? describeUiError(error) : 'This duel is not available yet.'}</p>
+          <Link className="secondary-action" to="/explore">
+            Back to explore
+          </Link>
+        </section>
+      </div>
+    )
+  }
+
+  const verdict = resolutionQuery.data?.verdict?.verdict
   const winnerSide =
     verdict === 'YES' || verdict === 'NO'
       ? verdict === duel.creatorSide
@@ -56,6 +82,7 @@ export function ResultPage() {
         <span className="eyebrow">Resolution on {selectedNetwork.label}</span>
         <h1>{verdict || 'Pending'}</h1>
         <p>{duel.claim}</p>
+        {resolutionQuery.error && <p className="warning-text">{describeUiError(resolutionQuery.error)}</p>}
         <div className="result-grid">
           <span>
             <small>Creator side</small>
@@ -71,16 +98,18 @@ export function ResultPage() {
           </span>
           <span>
             <small>Winner</small>
-            <strong>{duel.verdict ? winnerSide : 'Pending'}</strong>
+            <strong>{verdict ? winnerSide : 'Pending'}</strong>
           </span>
           <span>
             <small>Payout state</small>
             <strong>{payoutState}</strong>
           </span>
         </div>
-        <Link className="secondary-action" to={`/duels/${duel.id}`}>Back to duel</Link>
+        <Link className="secondary-action" to={`/duels/${duel.id}`}>
+          Back to duel
+        </Link>
       </section>
-      <VerdictPanel verdict={duel.verdict} />
+      <VerdictPanel verdict={resolutionQuery.data?.verdict} />
     </div>
   )
 }

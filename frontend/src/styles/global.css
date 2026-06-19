@@ -437,6 +437,52 @@ p {
   font-size: 0.78rem;
 }
 
+.empty-state {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: start;
+  padding: 1.35rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(10, 8, 6, 0.68);
+  backdrop-filter: blur(14px);
+}
+
+.modal-card {
+  width: min(460px, 100%);
+  padding: 1.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.34);
+}
+
+.modal-card h2 {
+  margin-top: 0.25rem;
+}
+
+.modal-card p {
+  margin-top: 0.6rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-top: 1.2rem;
+}
+
+.modal-actions > button {
+  flex: 1 1 160px;
+}
+
 .page {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;

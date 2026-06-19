@@ -1,9 +1,25 @@
 import { Link } from 'react-router-dom'
 import { BrainCircuit, Landmark, Scale, Swords, TimerReset, Trophy } from 'lucide-react'
 import { DuelCard } from '../components/DuelCard'
-import { demoDuels } from '../lib/duels'
+import { useEffect } from 'react'
+import { useBaseNetwork } from '../lib/network'
+import { useLiveDuelInventory } from '../lib/duelData'
+import { describeUiError, logUiError } from '../lib/uiErrors'
 
 export function LandingPage() {
+  const { selectedChainId } = useBaseNetwork()
+  const { items, isLoading, error } = useLiveDuelInventory(selectedChainId)
+  const featuredDuels = items
+    .slice()
+    .sort((left, right) => Number(right.duel.id) - Number(left.duel.id))
+    .slice(0, 3)
+
+  useEffect(() => {
+    if (error) {
+      logUiError('Failed to load landing inventory', error)
+    }
+  }, [error])
+
   return (
     <div className="page landing-page">
       <section className="hero cinematic-hero brand-hero">
@@ -57,9 +73,23 @@ export function LandingPage() {
         <Link to="/explore">See all</Link>
       </section>
 
-      <div className="duel-grid">
-        {demoDuels.slice(0, 3).map((duel) => <DuelCard key={duel.id} duel={duel} />)}
-      </div>
+      {error && <p className="warning-text">{describeUiError(error)}</p>}
+
+      {isLoading && featuredDuels.length === 0 ? (
+        <div className="empty-state panel">
+          <h3>Loading duels</h3>
+          <p>Fetching the live marketplace inventory.</p>
+        </div>
+      ) : featuredDuels.length > 0 ? (
+        <div className="duel-grid">
+          {featuredDuels.map(({ duel }) => <DuelCard key={duel.id} duel={duel} />)}
+        </div>
+      ) : (
+        <div className="empty-state panel">
+          <h3>No duels available yet</h3>
+          <p>Create the first duel to populate the arena.</p>
+        </div>
+      )}
 
       <section className="settlement-band">
         <div>

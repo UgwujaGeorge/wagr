@@ -1,78 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { wagrDuelEscrowAbi, type DuelSide, type DuelStatus } from '@wagr/shared'
-import { formatEther, parseEther } from 'viem'
-import { useAccount, useChainId, useReadContract, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import { wagrDuelEscrowAbi } from '@wagr/shared'
+import { parseEther } from 'viem'
+import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { VerdictPanel } from '../components/VerdictPanel'
-import { demoDuels, formatCountdown, oppositeSide, statusTone } from '../lib/duels'
+import { WrongNetworkModal } from '../components/WrongNetworkModal'
+import { formatCountdown, oppositeSide, statusTone } from '../lib/duels'
+import { canClaimPayout, canClaimRefund, getWinnerAddress, isParticipant, sameAddress, useLiveDuel } from '../lib/duelData'
 import { getBaseTxUrl, getEscrowAddress, hasEscrowAddress } from '../lib/contracts'
 import { genlayerTxUrl, resolveOnGenLayer } from '../lib/genlayer'
 import { useBaseNetwork } from '../lib/network'
-import { getDuelMetadata, getRelayerConfig, getResolution, submitGenLayerResolution } from '../lib/relayer'
-
-const zeroAddress = '0x0000000000000000000000000000000000000000'
-const statusById = ['None', 'Open', 'Active', 'ResolutionRequested', 'Resolved', 'Invalid', 'Canceled', 'Paid'] as const
-const verdictById = ['None', 'YES', 'NO', 'INVALID'] as const
-
-interface ChainDuelView {
-  creator: string
-  counterparty?: string
-  creatorSide: DuelSide
-  stakeAmount: bigint
-  expiry: bigint
-  status: DuelStatus | 'None'
-  verdict: (typeof verdictById)[number]
-  creatorClaimed: boolean
-  counterpartyClaimed: boolean
-}
-
-function valueAt<T>(value: unknown, key: string, index: number): T | undefined {
-  const objectValue = value as Record<string, unknown>
-  const arrayValue = value as readonly unknown[]
-  return (objectValue?.[key] ?? arrayValue?.[index]) as T | undefined
-}
-
-function normalizeChainDuel(value: unknown): ChainDuelView | undefined {
-  if (!value) return undefined
-
-  const creator = valueAt<string>(value, 'creator', 0)
-  if (!creator || creator === zeroAddress) return undefined
-
-  const counterparty = valueAt<string>(value, 'counterparty', 1)
-  const creatorSideId = Number(valueAt<number | bigint>(value, 'creatorSide', 2) || 0)
-  const statusId = Number(valueAt<number | bigint>(value, 'status', 6) || 0)
-  const verdictId = Number(valueAt<number | bigint>(value, 'verdict', 7) || 0)
-
-  return {
-    creator,
-    counterparty: counterparty && counterparty !== zeroAddress ? counterparty : undefined,
-    creatorSide: creatorSideId === 2 ? 'NO' : 'YES',
-    stakeAmount: valueAt<bigint>(value, 'stakeAmount', 3) || 0n,
-    expiry: valueAt<bigint>(value, 'expiry', 4) || 0n,
-    status: statusById[statusId] || 'None',
-    verdict: verdictById[verdictId] || 'None',
-    creatorClaimed: Boolean(valueAt<boolean>(value, 'creatorClaimed', 8)),
-    counterpartyClaimed: Boolean(valueAt<boolean>(value, 'counterpartyClaimed', 9)),
-  }
-}
+import { getRelayerConfig, getResolution, submitGenLayerResolution } from '../lib/relayer'
+import { describeUiError, isWrongNetworkError, logUiError } from '../lib/uiErrors'
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
-}
-
-function sameAddress(left: string | undefined, right: string | undefined): boolean {
-  return Boolean(left && right && left.toLowerCase() === right.toLowerCase())
-}
-
-function getWinnerAddress(duel: ChainDuelView | undefined): string | undefined {
-  if (!duel || (duel.verdict !== 'YES' && duel.verdict !== 'NO')) return undefined
-  if (duel.creatorSide === duel.verdict) return duel.creator
-  return duel.counterparty
-}
-
-function isParticipant(duel: ChainDuelView | undefined, userAddress: string | undefined): boolean {
-  return sameAddress(duel?.creator, userAddress) || sameAddress(duel?.counterparty, userAddress)
 }
 
 export function DuelDetailPage() {
@@ -85,19 +28,10 @@ export function DuelDetailPage() {
   const [resolveStep, setResolveStep] = useState<string>()
   const [genlayerTxHash, setGenlayerTxHash] = useState<`0x${string}`>()
   const [baseActionError, setBaseActionError] = useState<string>()
-  const contractAddress = getEscrowAddress(selectedChainId)
-  const demoDuel = demoDuels.find((item) => item.id === duelId) || demoDuels[0]
-  const isNumericDuelId = Boolean(duelId && /^\d+$/.test(duelId))
-  const parsedDuelId = isNumericDuelId ? BigInt(duelId!) : 0n
-  const chainReadEnabled = Boolean(contractAddress && isNumericDuelId)
+  const [wrongNetworkModalOpen, setWrongNetworkModalOpen] = useState(false)
+  const { duel, metadata, chain, error: duelError, isLoading, isChainLoading, isChainFetching } = useLiveDuel(selectedChainId, duelId)
   const { writeContract, isPending, data, error } = useWriteContract()
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: data })
-  const metadataQuery = useQuery({
-    queryKey: ['metadata', selectedChainId, duelId],
-    queryFn: () => getDuelMetadata(selectedChainId, duelId!),
-    enabled: Boolean(duelId),
-    retry: false,
-  })
   const resolutionQuery = useQuery({
     queryKey: ['resolution', selectedChainId, duelId],
     queryFn: () => getResolution(selectedChainId, duelId!),
@@ -109,59 +43,158 @@ export function DuelDetailPage() {
     queryFn: getRelayerConfig,
     retry: false,
   })
-  const {
-    data: rawChainDuel,
-    error: chainDuelError,
-    isFetching: isChainDuelFetching,
-    isLoading: isChainDuelLoading,
-    refetch: refetchChainDuel,
-  } = useReadContract({
-    address: contractAddress,
-    chainId: selectedChainId,
-    abi: wagrDuelEscrowAbi,
-    functionName: 'duels',
-    args: [parsedDuelId],
-    query: {
-      enabled: chainReadEnabled,
-      refetchInterval: chainReadEnabled ? 5_000 : false,
-      staleTime: 0,
-    },
-  })
-  const chainDuel = normalizeChainDuel(rawChainDuel)
-  const metadata = metadataQuery.data
-  const duel = metadata
-    ? {
-        id: metadata.duelId,
-        claim: metadata.claim,
-        category: metadata.category || 'Public evidence',
-        creator: chainDuel?.creator ? shortAddress(chainDuel.creator) : 'Onchain creator',
-        counterparty: chainDuel?.counterparty ? shortAddress(chainDuel.counterparty) : undefined,
-        creatorSide: chainDuel?.creatorSide || metadata.creatorSide,
-        stakeEth: chainDuel ? formatEther(chainDuel.stakeAmount) : '0',
-        potEth: chainDuel ? formatEther(chainDuel.stakeAmount * 2n) : '0',
-        expiry: chainDuel?.expiry ? new Date(Number(chainDuel.expiry) * 1000).toISOString() : metadata.expiryTime,
-        status: chainDuel?.status === 'None' || !chainDuel?.status ? 'Open' : chainDuel.status,
-        evidenceUrls: metadata.evidenceUrls,
-        resolutionRules: metadata.resolutionRules,
-        verdict: resolutionQuery.data?.verdict,
-      }
-    : demoDuel
-  const isExpired = new Date(duel.expiry).getTime() <= Date.now()
-  const isCheckingOnchainStatus = Boolean(metadata && chainReadEnabled && !chainDuel && (isChainDuelLoading || isChainDuelFetching))
-  const hasOnchainDuel = Boolean(chainDuel && chainDuel.status !== 'None')
-  const onchainActionDisabled = !hasEscrowAddress(selectedChainId) || !hasOnchainDuel || isPending || isConfirming || isSwitchingBase
-  const statusLabel = isCheckingOnchainStatus ? 'Checking onchain' : duel.status
+
+  useEffect(() => {
+    if (duelError) {
+      logUiError('Failed to load duel detail', duelError)
+    }
+  }, [duelError])
+
+  useEffect(() => {
+    if (resolutionQuery.error) {
+      logUiError('Failed to load duel resolution', resolutionQuery.error)
+    }
+  }, [resolutionQuery.error])
+
+  useEffect(() => {
+    if (relayerConfigQuery.error) {
+      logUiError('Failed to load relayer config', relayerConfigQuery.error)
+    }
+  }, [relayerConfigQuery.error])
+
+  useEffect(() => {
+    if (error) {
+      logUiError('Duel detail transaction error', error)
+    }
+  }, [error])
+
+  const isCheckingOnchainStatus = Boolean(metadata && (isChainLoading || isChainFetching))
+  const hasOnchainDuel = Boolean(chain && chain.status !== 'None')
+  const isExpired = duel ? new Date(duel.expiry).getTime() <= Date.now() : false
+  const statusLabel = duel ? (isCheckingOnchainStatus ? 'Checking onchain' : duel.status) : 'Loading'
   const connectedWalletLabel = `${connector?.id || ''} ${connector?.name || ''}`
   const isRabbyWallet = /rabby/i.test(connectedWalletLabel)
-  const canShowResolveAction = (duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired
+  const canShowResolveAction = Boolean(duel && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired)
   const walletNeedsBaseSwitch = Boolean(address && walletChainId !== selectedChainId)
-  const winnerAddress = getWinnerAddress(chainDuel)
+  const winnerAddress = getWinnerAddress(chain)
   const connectedWalletIsWinner = sameAddress(winnerAddress, address)
-  const connectedWalletIsParticipant = isParticipant(chainDuel, address)
-  const payoutClaimed = Boolean(chainDuel?.creatorClaimed && chainDuel?.counterpartyClaimed)
+  const connectedWalletIsParticipant = isParticipant(chain, address)
+  const payoutClaimed = Boolean(chain?.creatorClaimed && chain?.counterpartyClaimed)
+  const onchainActionDisabled = !hasEscrowAddress(selectedChainId) || !hasOnchainDuel || isPending || isConfirming || isSwitchingBase
+  const verdict = resolutionQuery.data?.verdict
+
+  useEffect(() => {
+    if (!isConfirmed || !duel) return
+    void queryClient.invalidateQueries({ queryKey: ['resolution', selectedChainId, duel.id] })
+    void queryClient.invalidateQueries({ queryKey: ['metadata-list', selectedChainId] })
+  }, [duel, isConfirmed, queryClient, selectedChainId])
+
+  async function ensureSelectedBaseChain() {
+    if (!address || walletChainId === selectedChainId) return true
+
+    try {
+      await switchChainAsync({ chainId: selectedChainId })
+      return true
+    } catch (switchError) {
+      logUiError('Failed to switch Base network', switchError)
+      if (isWrongNetworkError(switchError)) {
+        setWrongNetworkModalOpen(true)
+      } else {
+        setBaseActionError(describeUiError(switchError))
+      }
+      return false
+    }
+  }
+
+  async function runBaseAction(action: () => void) {
+    setBaseActionError(undefined)
+
+    if (!(await ensureSelectedBaseChain())) {
+      return
+    }
+
+    try {
+      action()
+    } catch (actionError) {
+      logUiError('Base action failed', actionError)
+      if (isWrongNetworkError(actionError)) {
+        setWrongNetworkModalOpen(true)
+        return
+      }
+      setBaseActionError(describeUiError(actionError))
+    }
+  }
+
+  async function accept() {
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress || !duel) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'acceptDuel',
+        args: [BigInt(duel.id)],
+        value: chain?.stakeAmount || parseEther(duel.stakeEth),
+      }),
+    )
+  }
+
+  async function markResolutionRequested() {
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress || !duel) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'markResolutionRequested',
+        args: [BigInt(duel.id)],
+      }),
+    )
+  }
+
+  async function claimPayout() {
+    if (!duel) return
+    if (!connectedWalletIsWinner) {
+      setBaseActionError('Only the winning wallet can claim this payout.')
+      return
+    }
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'claimPayout',
+        args: [BigInt(duel.id)],
+      }),
+    )
+  }
+
+  async function claimRefund() {
+    if (!duel) return
+    if (!connectedWalletIsParticipant) {
+      setBaseActionError('Only duel participants can claim refunds.')
+      return
+    }
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'claimRefund',
+        args: [BigInt(duel.id)],
+      }),
+    )
+  }
+
   const resolveMutation = useMutation({
     mutationFn: async () => {
-      if (!metadata) throw new Error('Relayer metadata is missing for this duel')
+      if (!metadata || !duel) throw new Error('Relayer metadata is missing for this duel')
       if (!address) throw new Error('Connect a wallet before resolving with GenLayer')
       const config = relayerConfigQuery.data || (await getRelayerConfig())
       const selectedProvider = (await connector?.getProvider()) as Parameters<typeof resolveOnGenLayer>[3]
@@ -175,102 +208,48 @@ export function DuelDetailPage() {
     },
     onSuccess: () => {
       setResolveStep(undefined)
+      if (!duel) return
       void queryClient.invalidateQueries({ queryKey: ['resolution', selectedChainId, duel.id] })
       void queryClient.invalidateQueries({ queryKey: ['metadata-list', selectedChainId] })
-      void refetchChainDuel()
     },
-    onError: () => {
+    onError: (mutationError) => {
+      logUiError('GenLayer resolution failed', mutationError)
       setResolveStep(undefined)
     },
   })
 
-  useEffect(() => {
-    if (!isConfirmed) return
-    void refetchChainDuel()
-    void queryClient.invalidateQueries({ queryKey: ['metadata-list', selectedChainId] })
-    void queryClient.invalidateQueries({ queryKey: ['resolution', selectedChainId, duelId] })
-  }, [duelId, isConfirmed, queryClient, refetchChainDuel, selectedChainId])
-
-  async function ensureSelectedBaseChain() {
-    if (address && walletChainId !== selectedChainId) {
-      await switchChainAsync({ chainId: selectedChainId })
-    }
+  if (isLoading && !duel) {
+    return (
+      <div className="page detail-layout">
+        <section className="panel duel-hero">
+          <span className="eyebrow">Loading duel</span>
+          <h1>Fetching live duel data.</h1>
+          <p>Please wait while the relayer and chain state load.</p>
+        </section>
+      </div>
+    )
   }
 
-  async function runBaseAction(action: () => void) {
-    setBaseActionError(undefined)
-    try {
-      await ensureSelectedBaseChain()
-      action()
-    } catch (switchError) {
-      setBaseActionError(switchError instanceof Error ? switchError.message : `Could not switch wallet to ${selectedNetwork.label}.`)
-    }
-  }
-
-  async function accept() {
-    const contractAddress = getEscrowAddress(selectedChainId)
-    if (!contractAddress) return
-    await runBaseAction(() => writeContract({
-      chainId: selectedChainId,
-      address: contractAddress,
-      abi: wagrDuelEscrowAbi,
-      functionName: 'acceptDuel',
-      args: [BigInt(duel.id)],
-      value: chainDuel?.stakeAmount || parseEther(duel.stakeEth),
-    }))
-  }
-
-  async function markResolutionRequested() {
-    const contractAddress = getEscrowAddress(selectedChainId)
-    if (!contractAddress) return
-    await runBaseAction(() => writeContract({
-      chainId: selectedChainId,
-      address: contractAddress,
-      abi: wagrDuelEscrowAbi,
-      functionName: 'markResolutionRequested',
-      args: [BigInt(duel.id)],
-    }))
-  }
-
-  async function claimPayout() {
-    if (!connectedWalletIsWinner) {
-      setBaseActionError('Only the winning wallet can claim this payout.')
-      return
-    }
-    const contractAddress = getEscrowAddress(selectedChainId)
-    if (!contractAddress) return
-    await runBaseAction(() => writeContract({
-      chainId: selectedChainId,
-      address: contractAddress,
-      abi: wagrDuelEscrowAbi,
-      functionName: 'claimPayout',
-      args: [BigInt(duel.id)],
-    }))
-  }
-
-  async function claimRefund() {
-    if (!connectedWalletIsParticipant) {
-      setBaseActionError('Only duel participants can claim refunds.')
-      return
-    }
-    const contractAddress = getEscrowAddress(selectedChainId)
-    if (!contractAddress) return
-    await runBaseAction(() => writeContract({
-      chainId: selectedChainId,
-      address: contractAddress,
-      abi: wagrDuelEscrowAbi,
-      functionName: 'claimRefund',
-      args: [BigInt(duel.id)],
-    }))
+  if (!duel) {
+    return (
+      <div className="page detail-layout">
+        <section className="panel duel-hero">
+          <span className="eyebrow">Missing duel</span>
+          <h1>Not found.</h1>
+          <p>{duelError ? describeUiError(duelError) : 'This duel could not be loaded from the live data source.'}</p>
+          <Link className="secondary-action" to="/explore">
+            Back to explore
+          </Link>
+        </section>
+      </div>
+    )
   }
 
   return (
     <div className="page detail-layout">
       <section className="duel-hero panel">
         <div className="duel-card-top">
-          <span className={`status-pill ${isCheckingOnchainStatus ? 'tone-pending' : statusTone(duel.status)}`}>
-            {statusLabel}
-          </span>
+          <span className={`status-pill ${isCheckingOnchainStatus ? 'tone-pending' : statusTone(duel.status)}`}>{statusLabel}</span>
           <span className="category-pill">{duel.category}</span>
         </div>
         <h1>{duel.claim}</h1>
@@ -314,14 +293,7 @@ export function DuelDetailPage() {
           {canShowResolveAction && (
             <button
               className="primary-action"
-              disabled={
-                !metadata ||
-                !hasOnchainDuel ||
-                !address ||
-                !relayerConfigQuery.data?.genlayerResolverAddress ||
-                isRabbyWallet ||
-                resolveMutation.isPending
-              }
+              disabled={!metadata || !hasOnchainDuel || !address || !relayerConfigQuery.data?.genlayerResolverAddress || isRabbyWallet || resolveMutation.isPending}
               onClick={() => resolveMutation.mutate()}
             >
               {resolveMutation.isPending ? 'Resolving' : 'Resolve with GenLayer'}
@@ -346,44 +318,29 @@ export function DuelDetailPage() {
         </div>
         {canShowResolveAction && (
           <p className="resolve-wallet-note muted">
-            GenLayer resolution requires MetaMask because StudioNet uses the GenLayer MetaMask Snap. Rabby can still be used for
-            {` ${selectedNetwork.label} actions.`}
+            GenLayer resolution requires MetaMask because StudioNet uses the GenLayer MetaMask Snap. Rabby can still be used for {` ${selectedNetwork.label} actions.`}
           </p>
         )}
         {!hasEscrowAddress(selectedChainId) && (
-          <p className="warning-text">
-            Onchain actions unlock after the {selectedNetwork.label} escrow contract is deployed and {selectedNetwork.envKey} is set.
-          </p>
+          <p className="warning-text">Onchain actions unlock after the {selectedNetwork.label} escrow contract is deployed and {selectedNetwork.envKey} is set.</p>
         )}
-        {!selectedNetwork.isTestnet && (
-          <p className="warning-text">You are using Base Mainnet. Real funds may be involved.</p>
-        )}
-        {walletNeedsBaseSwitch && (
-          <p className="warning-text">Base actions will switch your wallet back to {selectedNetwork.label} before opening the transaction.</p>
-        )}
-        {duel.status === 'Resolved' && winnerAddress && (
-          <p className="muted">Winning wallet: {shortAddress(winnerAddress)}</p>
-        )}
-        {metadata && chainReadEnabled && !chainDuel && !isCheckingOnchainStatus && (
+        {!selectedNetwork.isTestnet && <p className="warning-text">You are using Base Mainnet. Real funds may be involved.</p>}
+        {walletNeedsBaseSwitch && <p className="warning-text">Base actions will switch your wallet back to {selectedNetwork.label} before opening the transaction.</p>}
+        {duel.status === 'Resolved' && winnerAddress && <p className="muted">Winning wallet: {shortAddress(winnerAddress)}</p>}
+        {metadata && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && !chain && !isCheckingOnchainStatus && (
           <p className="warning-text">No deployed duel was found for this id yet. Refresh after the creation transaction confirms.</p>
         )}
-        {chainDuelError && <p className="warning-text">Could not refresh onchain duel status: {chainDuelError.message}</p>}
-        {!metadata && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && (
-          <p className="warning-text">Relayer metadata is missing for this duel, so it cannot be resolved from the app yet.</p>
-        )}
-        {metadata && !address && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired && (
-          <p className="warning-text">Connect a wallet to sign the GenLayer StudioNet resolution transaction.</p>
-        )}
+        {duelError && <p className="warning-text">{describeUiError(duelError)}</p>}
+        {!metadata && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && <p className="warning-text">Relayer metadata is missing for this duel, so it cannot be resolved from the app yet.</p>}
+        {metadata && !address && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired && <p className="warning-text">Connect a wallet to sign the GenLayer StudioNet resolution transaction.</p>}
         {metadata && address && isRabbyWallet && canShowResolveAction && (
           <p className="warning-text">
-            Rabby works for {selectedNetwork.label} actions, but GenLayer StudioNet resolution currently requires MetaMask Snap support.
-            Disconnect Rabby and connect MetaMask before resolving.
+            Rabby works for {selectedNetwork.label} actions, but GenLayer StudioNet resolution currently requires MetaMask Snap support. Disconnect Rabby and connect MetaMask before resolving.
           </p>
         )}
-        {metadata && relayerConfigQuery.data && !relayerConfigQuery.data.genlayerResolverAddress && (
-          <p className="warning-text">Deploy the GenLayer resolver and set GENLAYER_RESOLVER_ADDRESS before resolving duels.</p>
-        )}
-        {relayerConfigQuery.error && <p className="warning-text">Could not load GenLayer config: {relayerConfigQuery.error.message}</p>}
+        {metadata && relayerConfigQuery.data && !relayerConfigQuery.data.genlayerResolverAddress && <p className="warning-text">Deploy the GenLayer resolver and set GENLAYER_RESOLVER_ADDRESS before resolving duels.</p>}
+        {resolutionQuery.error && <p className="warning-text">{describeUiError(resolutionQuery.error)}</p>}
+        {relayerConfigQuery.error && <p className="warning-text">{describeUiError(relayerConfigQuery.error)}</p>}
         {resolveStep && <p className="muted">{resolveStep}</p>}
         {genlayerTxHash && relayerConfigQuery.data && (
           <p className="success-text">
@@ -393,7 +350,7 @@ export function DuelDetailPage() {
             </a>
           </p>
         )}
-        {resolveMutation.error && <p className="warning-text">{resolveMutation.error.message}</p>}
+        {resolveMutation.error && <p className="warning-text">{describeUiError(resolveMutation.error)}</p>}
         {baseActionError && <p className="warning-text">{baseActionError}</p>}
         {resolveMutation.data && <p className="success-text">{resolveMutation.data.nextStep}</p>}
         {resolveMutation.data?.baseTxHash && (
@@ -404,7 +361,7 @@ export function DuelDetailPage() {
             </a>
           </p>
         )}
-        {error && <p className="warning-text">{error.message}</p>}
+        {error && <p className="warning-text">{describeUiError(error)}</p>}
         {data && (
           <p className="success-text">
             Transaction submitted:{' '}
@@ -431,8 +388,25 @@ export function DuelDetailPage() {
             ))}
           </ul>
         </section>
-        <VerdictPanel verdict={duel.verdict} />
+        <VerdictPanel verdict={verdict} />
       </aside>
+
+      <WrongNetworkModal
+        isOpen={wrongNetworkModalOpen}
+        isSwitching={isSwitchingBase}
+        onCancel={() => setWrongNetworkModalOpen(false)}
+        onSwitch={async () => {
+          try {
+            await switchChainAsync({ chainId: selectedChainId })
+            setWrongNetworkModalOpen(false)
+          } catch (switchError) {
+            logUiError('Wrong network modal switch failed', switchError)
+            if (!isWrongNetworkError(switchError)) {
+              setBaseActionError(describeUiError(switchError))
+            }
+          }
+        }}
+      />
     </div>
   )
 }
