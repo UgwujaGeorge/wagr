@@ -25,7 +25,7 @@ GenLayer remains on StudioNet for now:
 - Network: `StudioNet`
 - RPC: `https://studio.genlayer.com/api`
 - Explorer: `https://explorer-studio.genlayer.com`
-- Resolver: `0x9d0A580Fc57F1F429b00F6c7d20Cf62C2Ba3cceb`
+- Resolver: `0x67E3e9426fBb383662e77c203512b089B7a56Cd9`
 
 Base Sepolia is the default network for safety. Base Mainnet is selectable in the frontend and uses the deployed mainnet escrow address above for real mainnet duels.
 
@@ -86,7 +86,7 @@ RELAYER_PRIVATE_KEY=
 GENLAYER_NETWORK=studionet
 GENLAYER_RPC_URL=https://studio.genlayer.com/api
 GENLAYER_EXPLORER_URL=https://explorer-studio.genlayer.com
-GENLAYER_RESOLVER_ADDRESS=0x9d0A580Fc57F1F429b00F6c7d20Cf62C2Ba3cceb
+GENLAYER_RESOLVER_ADDRESS=0x67E3e9426fBb383662e77c203512b089B7a56Cd9
 RELAYER_PORT=8787
 RELAYER_DATA_FILE=.wagr-relayer-data.json
 ```

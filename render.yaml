@@ -28,7 +28,7 @@ services:
       - key: GENLAYER_EXPLORER_URL
         value: https://explorer-studio.genlayer.com
       - key: GENLAYER_RESOLVER_ADDRESS
-        value: 0x9d0A580Fc57F1F429b00F6c7d20Cf62C2Ba3cceb
+        value: 0x67E3e9426fBb383662e77c203512b089B7a56Cd9
       - key: DATABASE_URL
         fromDatabase:
           name: wagr-relayer-db
