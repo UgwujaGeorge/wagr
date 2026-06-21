@@ -7,7 +7,7 @@ Wagr is a one-on-one prediction duel app:
 - Users create direct YES/NO duels.
 - Base holds the stake, escrow, payout, and refund logic.
 - GenLayer StudioNet resolves the public-evidence verdict.
-- The relayer submits GenLayer YES/NO/INVALID verdicts back to the correct Base escrow contract.
+- The relayer submits GenLayer YES/NO verdicts back to the correct Base escrow contract, and settles INVALID or UNRESOLVED results as an INVALID verdict so both participants can claim a refund.
 
 Wagr is not an AMM or order book. Each duel is a matched 1v1 challenge.
 
@@ -193,7 +193,7 @@ After a successful mainnet deployment:
 
 The GenLayer resolver is the deciding layer for Wagr outcomes. The frontend sends the `resolve_duel(...)` transaction to GenLayer StudioNet for the user to sign. The relayer then reads `get_resolution_json(...)` from GenLayer and submits YES/NO/INVALID verdicts to the selected Base chain.
 
-UNRESOLVED GenLayer results are not submitted to Base.
+UNRESOLVED GenLayer results (for example, when the evidence URL cannot be reached) are submitted to Base as an INVALID verdict so both participants can claim a refund. The original UNRESOLVED reason is preserved in the relayer resolution record and shown in the app. The "No resolution stored for duel" case is the exception: it is treated as not-yet-resolved and is never submitted, so the duel can be retried.
 
 Check the resolver schema:
 

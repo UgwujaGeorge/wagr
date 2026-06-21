@@ -60,23 +60,20 @@ export function ResultPage() {
   }
 
   const verdict = resolutionQuery.data?.verdict?.verdict
+  const invalidReason = resolutionQuery.data?.verdict?.invalid_reason
   const winnerSide =
     verdict === 'YES' || verdict === 'NO'
       ? verdict === duel.creatorSide
         ? 'Creator'
         : 'Counterparty'
-      : verdict === 'INVALID'
+      : verdict === 'INVALID' || verdict === 'UNRESOLVED'
         ? 'Refundable'
-        : verdict === 'UNRESOLVED'
-          ? 'Unresolved'
         : 'Pending'
   const payoutState =
     verdict === 'YES' || verdict === 'NO'
       ? 'Winner can claim'
-      : verdict === 'INVALID'
+      : verdict === 'INVALID' || verdict === 'UNRESOLVED'
         ? 'Both sides refund'
-        : verdict === 'UNRESOLVED'
-          ? 'Evidence could not be fetched'
         : 'Awaiting verdict'
 
   return (
@@ -86,6 +83,12 @@ export function ResultPage() {
         <span className="eyebrow">Resolution on {selectedNetwork.label}</span>
         <h1>{verdict || 'Pending'}</h1>
         <p>{duel.claim}</p>
+        {verdict === 'UNRESOLVED' && (
+          <p className="muted">
+            GenLayer could not resolve this duel{invalidReason ? `: ${invalidReason}` : ''}. It was settled as INVALID on Base, so both
+            participants can claim their stake back from My Duels → Refundable.
+          </p>
+        )}
         {resolutionQuery.error && <p className="warning-text">{describeUiError(resolutionQuery.error)}</p>}
         <div className="result-grid">
           <span>

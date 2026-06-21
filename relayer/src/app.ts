@@ -102,19 +102,18 @@ export function createRelayerApp(deps: RelayerAppDeps) {
       const genlayerTxHash = parseGenLayerTxHash(body)
       const result = await deps.readResolutionFromGenLayer(config, getGenLayerDuelId(chainId, duelId), genlayerTxHash)
       const hash = deps.verdictHash(result.verdict)
+      const baseVerdict = result.verdict.verdict === 'UNRESOLVED' ? 'INVALID' : result.verdict.verdict
       let baseSubmitted = false
       let baseTxHash: `0x${string}` | undefined
       let baseSubmitError: string | undefined
 
-      if (result.verdict.verdict === 'UNRESOLVED') {
-        baseSubmitError = result.verdict.invalid_reason || 'GenLayer returned UNRESOLVED, so no Base verdict was submitted.'
-      } else if (config.baseNetworks[chainId].escrowAddress && config.relayerPrivateKey) {
+      if (config.baseNetworks[chainId].escrowAddress && config.relayerPrivateKey) {
         try {
           baseTxHash = await deps.submitVerdictToBase(
             config,
             chainId,
             BigInt(duelId),
-            result.verdict.verdict,
+            baseVerdict,
             result.verdict.confidence,
             hash,
           )
@@ -141,9 +140,11 @@ export function createRelayerApp(deps: RelayerAppDeps) {
         genlayerTxHash: result.genlayerTxHash,
         baseSubmitError,
         nextStep: baseSubmitted
-          ? 'Verdict submitted to Base.'
+          ? result.verdict.verdict === 'UNRESOLVED'
+            ? `GenLayer returned UNRESOLVED${result.verdict.invalid_reason ? `: ${result.verdict.invalid_reason}` : ''}. Submitted as INVALID on Base so both participants can claim refunds.`
+            : 'Verdict submitted to Base.'
           : result.verdict.verdict === 'UNRESOLVED'
-            ? `GenLayer returned UNRESOLVED${result.verdict.invalid_reason ? `: ${result.verdict.invalid_reason}` : ''}. No Base verdict was submitted, so this duel can be retried after the evidence is reachable.`
+            ? `GenLayer returned UNRESOLVED${result.verdict.invalid_reason ? `: ${result.verdict.invalid_reason}` : ''}. The duel remains refundable once Base configuration is available.`
             : 'Verdict stored locally. Configure Base escrow address and relayer private key to submit onchain.',
       })
     } catch (error) {

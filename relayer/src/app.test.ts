@@ -34,10 +34,11 @@ const config: RelayerConfig = {
   genlayerResolverAddress: '0x0000000000000000000000000000000000000002',
 }
 
-test('UNRESOLVED does not submit a verdict to Base', async () => {
+test('UNRESOLVED submits INVALID to Base and preserves the reason', async () => {
   const storage = createMemoryStorage()
   await storage.saveMetadata(createMetadata('1'))
   let baseSubmitCount = 0
+  let submittedVerdict: string | undefined
 
   const app = createRelayerApp({
     config,
@@ -49,8 +50,9 @@ test('UNRESOLVED does not submit a verdict to Base', async () => {
       genlayerTxHash: validGenLayerTxHash,
     }),
     storage,
-    submitVerdictToBase: async () => {
+    submitVerdictToBase: async (_config, _chainId, _duelId, verdict) => {
       baseSubmitCount += 1
+      submittedVerdict = verdict
       return baseTxHash
     },
     verdictHash: () => verdictHash,
@@ -60,12 +62,15 @@ test('UNRESOLVED does not submit a verdict to Base', async () => {
   const body = await response.json()
 
   assert.equal(response.status, 200)
-  assert.equal(baseSubmitCount, 0)
-  assert.equal(body.baseSubmitted, false)
-  assert.equal(body.baseTxHash, undefined)
-  assert.equal(body.baseSubmitError, 'Evidence URL could not be reached: https://example.com')
-  assert.match(body.nextStep, /Evidence URL could not be reached/)
-  assert.equal((await storage.getResolution(baseSepolia.id, '1'))?.baseSubmitted, false)
+  assert.equal(baseSubmitCount, 1)
+  assert.equal(submittedVerdict, 'INVALID')
+  assert.equal(body.baseSubmitted, true)
+  assert.equal(body.baseTxHash, baseTxHash)
+  assert.equal(body.baseSubmitError, undefined)
+  assert.match(body.nextStep, /UNRESOLVED/)
+  assert.match(body.nextStep, /Submitted as INVALID on Base/)
+  assert.equal((await storage.getResolution(baseSepolia.id, '1'))?.baseSubmitted, true)
+  assert.equal((await storage.getResolution(baseSepolia.id, '1'))?.verdict.verdict, 'UNRESOLVED')
 })
 
 test('YES and NO verdicts submit to Base', async (t) => {
