@@ -42,7 +42,10 @@ test('UNRESOLVED does not submit a verdict to Base', async () => {
   const app = createRelayerApp({
     config,
     readResolutionFromGenLayer: async () => ({
-      verdict: createVerdict('UNRESOLVED'),
+      verdict: {
+        ...createVerdict('UNRESOLVED'),
+        invalid_reason: 'Evidence URL could not be reached: https://example.com',
+      },
       genlayerTxHash: validGenLayerTxHash,
     }),
     storage,
@@ -60,8 +63,8 @@ test('UNRESOLVED does not submit a verdict to Base', async () => {
   assert.equal(baseSubmitCount, 0)
   assert.equal(body.baseSubmitted, false)
   assert.equal(body.baseTxHash, undefined)
-  assert.match(body.baseSubmitError, /UNRESOLVED/)
-  assert.match(body.nextStep, /retried/)
+  assert.equal(body.baseSubmitError, 'Evidence URL could not be reached: https://example.com')
+  assert.match(body.nextStep, /Evidence URL could not be reached/)
   assert.equal((await storage.getResolution(baseSepolia.id, '1'))?.baseSubmitted, false)
 })
 

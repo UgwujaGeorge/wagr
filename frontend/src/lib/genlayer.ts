@@ -26,6 +26,9 @@ export interface GenLayerResolveResult {
   verdict: GenLayerVerdict
 }
 
+const GENLAYER_RECEIPT_WAIT_INTERVAL_MS = 5_000
+const GENLAYER_RECEIPT_WAIT_RETRIES = 84
+
 export async function resolveOnGenLayer(
   config: GenLayerConfig,
   metadata: StoredDuelMetadata,
@@ -73,8 +76,8 @@ export async function resolveOnGenLayer(
   const receipt = await readClient.waitForTransactionReceipt({
     hash: txHash,
     status: TransactionStatus.ACCEPTED,
-    interval: 5_000,
-    retries: 120,
+    interval: GENLAYER_RECEIPT_WAIT_INTERVAL_MS,
+    retries: GENLAYER_RECEIPT_WAIT_RETRIES,
   })
 
   if (getReceiptExecutionResultName(receipt) === ExecutionResult.FINISHED_WITH_ERROR) {

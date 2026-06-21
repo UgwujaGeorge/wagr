@@ -9,6 +9,9 @@ export interface GenLayerResolutionResult {
   genlayerTxHash?: `0x${string}`
 }
 
+const GENLAYER_RECEIPT_WAIT_INTERVAL_MS = 5_000
+const GENLAYER_RECEIPT_WAIT_RETRIES = 84
+
 export async function readResolutionFromGenLayer(
   config: RelayerConfig,
   duelId: string,
@@ -27,8 +30,8 @@ export async function readResolutionFromGenLayer(
     const receipt = await client.waitForTransactionReceipt({
       hash: genlayerTxHash as TransactionHash,
       status: TransactionStatus.ACCEPTED,
-      interval: 5_000,
-      retries: 120,
+      interval: GENLAYER_RECEIPT_WAIT_INTERVAL_MS,
+      retries: GENLAYER_RECEIPT_WAIT_RETRIES,
     })
 
     if (getReceiptExecutionResultName(receipt) === ExecutionResult.FINISHED_WITH_ERROR) {

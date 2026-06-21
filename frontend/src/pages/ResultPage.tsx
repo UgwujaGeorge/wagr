@@ -67,12 +67,16 @@ export function ResultPage() {
         : 'Counterparty'
       : verdict === 'INVALID'
         ? 'Refundable'
+        : verdict === 'UNRESOLVED'
+          ? 'Unresolved'
         : 'Pending'
   const payoutState =
     verdict === 'YES' || verdict === 'NO'
       ? 'Winner can claim'
       : verdict === 'INVALID'
         ? 'Both sides refund'
+        : verdict === 'UNRESOLVED'
+          ? 'Evidence could not be fetched'
         : 'Awaiting verdict'
 
   return (

@@ -107,7 +107,7 @@ export function createRelayerApp(deps: RelayerAppDeps) {
       let baseSubmitError: string | undefined
 
       if (result.verdict.verdict === 'UNRESOLVED') {
-        baseSubmitError = 'GenLayer returned UNRESOLVED, so no Base verdict was submitted.'
+        baseSubmitError = result.verdict.invalid_reason || 'GenLayer returned UNRESOLVED, so no Base verdict was submitted.'
       } else if (config.baseNetworks[chainId].escrowAddress && config.relayerPrivateKey) {
         try {
           baseTxHash = await deps.submitVerdictToBase(
@@ -143,7 +143,7 @@ export function createRelayerApp(deps: RelayerAppDeps) {
         nextStep: baseSubmitted
           ? 'Verdict submitted to Base.'
           : result.verdict.verdict === 'UNRESOLVED'
-            ? 'GenLayer returned UNRESOLVED. No Base verdict was submitted, so this duel can be retried after the evidence is clear.'
+            ? `GenLayer returned UNRESOLVED${result.verdict.invalid_reason ? `: ${result.verdict.invalid_reason}` : ''}. No Base verdict was submitted, so this duel can be retried after the evidence is reachable.`
             : 'Verdict stored locally. Configure Base escrow address and relayer private key to submit onchain.',
       })
     } catch (error) {
