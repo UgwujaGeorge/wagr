@@ -1,4 +1,4 @@
-import { getBaseChain, isSupportedBaseChainId, type BaseChainId, wagrDuelEscrowAbi } from '@wagr/shared'
+import { getBaseChain, isSupportedBaseChainId, type BaseChainId, wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
 import {
   createPublicClient,
   createWalletClient,
@@ -40,6 +40,7 @@ export function createBaseClients(config: RelayerConfig, chainId: BaseChainId) {
     ? createWalletClient({
         account: privateKeyToAccount(config.relayerPrivateKey),
         chain,
+        dataSuffix: WAGR_DATA_SUFFIX,
         transport: http(network.rpcUrl),
       })
     : undefined

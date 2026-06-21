@@ -1,9 +1,10 @@
-import { baseMainnet, baseSepolia } from '@wagr/shared'
+import { baseMainnet, baseSepolia, WAGR_DATA_SUFFIX } from '@wagr/shared'
 import { createConfig, http } from 'wagmi'
 import { injected } from 'wagmi/connectors'
 
 export const wagmiConfig = createConfig({
   chains: [baseSepolia, baseMainnet],
+  dataSuffix: WAGR_DATA_SUFFIX,
   connectors: [
     injected({ target: 'rabby' }),
     injected({ target: 'metaMask' }),
