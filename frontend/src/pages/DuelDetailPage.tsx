@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { wagrDuelEscrowAbi } from '@wagr/shared'
+import { wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
 import { parseEther } from 'viem'
 import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { VerdictPanel } from '../components/VerdictPanel'
@@ -136,6 +136,7 @@ export function DuelDetailPage() {
         functionName: 'acceptDuel',
         args: [BigInt(duel.id)],
         value: chain?.stakeAmount || parseEther(duel.stakeEth),
+        dataSuffix: WAGR_DATA_SUFFIX,
       }),
     )
   }
@@ -150,6 +151,7 @@ export function DuelDetailPage() {
         abi: wagrDuelEscrowAbi,
         functionName: 'markResolutionRequested',
         args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
       }),
     )
   }
@@ -169,6 +171,7 @@ export function DuelDetailPage() {
         abi: wagrDuelEscrowAbi,
         functionName: 'claimPayout',
         args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
       }),
     )
   }
@@ -188,6 +191,7 @@ export function DuelDetailPage() {
         abi: wagrDuelEscrowAbi,
         functionName: 'claimRefund',
         args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
       }),
     )
   }

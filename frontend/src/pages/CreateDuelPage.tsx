@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { wagrDuelEscrowAbi } from '@wagr/shared'
+import { wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
 import { keccak256, parseEther, parseEventLogs, stringToHex } from 'viem'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
@@ -97,6 +97,7 @@ export function CreateDuelPage() {
           functionName: 'createDuel',
           args: [side === 'YES' ? 1 : 2, BigInt(expirySeconds), metadataHash],
           value: parseEther(stake),
+          dataSuffix: WAGR_DATA_SUFFIX,
         })
       } catch (writeError) {
         logUiError('Failed to submit duel creation transaction', writeError)
