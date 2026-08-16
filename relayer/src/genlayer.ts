@@ -69,15 +69,62 @@ function parseGenLayerVerdict(value: string): GenLayerVerdict {
     throw new Error('GenLayer resolver returned an invalid confidence score')
   }
 
+  const invalidReason = String(parsed.invalid_reason || '')
+  if (verdict === 'UNRESOLVED' && invalidReason === 'No resolution stored for duel') {
+    return {
+      resolution_scope: '',
+      duel_id: '',
+      base_chain_id: 0,
+      base_duel_id: '',
+      metadata_hash: '',
+      authenticated_duel_data_hash: '',
+      verdict,
+      confidence,
+      evidence_summary: String(parsed.evidence_summary || ''),
+      sources_checked: Array.isArray(parsed.sources_checked) ? parsed.sources_checked : [],
+      reasoning: String(parsed.reasoning || ''),
+      resolved_at: String(parsed.resolved_at || ''),
+      invalid_reason: invalidReason,
+    }
+  }
+
   return {
+    resolution_scope: requireString(parsed.resolution_scope, 'resolution scope'),
+    duel_id: requireString(parsed.duel_id, 'duel ID'),
+    base_chain_id: requireInteger(parsed.base_chain_id, 'Base chain ID'),
+    base_duel_id: requireString(parsed.base_duel_id, 'Base duel ID'),
+    metadata_hash: requireBytes32(parsed.metadata_hash, 'metadata hash'),
+    authenticated_duel_data_hash: requireBytes32(parsed.authenticated_duel_data_hash, 'authenticated duel data hash'),
     verdict,
     confidence,
     evidence_summary: String(parsed.evidence_summary || ''),
     sources_checked: Array.isArray(parsed.sources_checked) ? parsed.sources_checked : [],
     reasoning: String(parsed.reasoning || ''),
     resolved_at: String(parsed.resolved_at || ''),
-    invalid_reason: String(parsed.invalid_reason || ''),
+    invalid_reason: invalidReason,
   }
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`GenLayer resolver returned an invalid ${label}`)
+  }
+  return value
+}
+
+function requireInteger(value: unknown, label: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`GenLayer resolver returned an invalid ${label}`)
+  }
+  return parsed
+}
+
+function requireBytes32(value: unknown, label: string): `0x${string}` {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`GenLayer resolver returned an invalid ${label}`)
+  }
+  return value.toLowerCase() as `0x${string}`
 }
 
 function getReceiptExecutionResultName(receipt: unknown): string | undefined {

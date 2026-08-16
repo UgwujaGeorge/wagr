@@ -102,6 +102,7 @@ export const wagrDuelEscrowAbi = [
       { name: 'duelId', type: 'uint256', internalType: 'uint256' },
       { name: 'verdict', type: 'uint8', internalType: 'enum WagrDuelEscrow.Verdict' },
       { name: 'confidenceBps', type: 'uint16', internalType: 'uint16' },
+      { name: 'metadataHash', type: 'bytes32', internalType: 'bytes32' },
       { name: 'verdictHash', type: 'bytes32', internalType: 'bytes32' },
     ],
     outputs: [],
@@ -138,14 +139,22 @@ export const wagrDuelEscrowAbi = [
   },
   {
     type: 'event',
+    name: 'ResolutionRequested',
+    inputs: [
+      { name: 'duelId', type: 'uint256', indexed: true, internalType: 'uint256' },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
     name: 'VerdictSubmitted',
     inputs: [
       { name: 'duelId', type: 'uint256', indexed: true, internalType: 'uint256' },
       { name: 'verdict', type: 'uint8', indexed: false, internalType: 'enum WagrDuelEscrow.Verdict' },
       { name: 'confidenceBps', type: 'uint16', indexed: false, internalType: 'uint16' },
+      { name: 'metadataHash', type: 'bytes32', indexed: false, internalType: 'bytes32' },
       { name: 'verdictHash', type: 'bytes32', indexed: false, internalType: 'bytes32' },
     ],
     anonymous: false,
   },
 ] as const
-

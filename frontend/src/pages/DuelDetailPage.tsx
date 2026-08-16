@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
+import { canonicalizeAuthenticatedDuelData, wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
 import { parseEther } from 'viem'
 import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { VerdictPanel } from '../components/VerdictPanel'
@@ -74,7 +74,7 @@ export function DuelDetailPage() {
   const statusLabel = duel ? (isCheckingOnchainStatus ? 'Checking onchain' : duel.status) : 'Loading'
   const connectedWalletLabel = `${connector?.id || ''} ${connector?.name || ''}`
   const isRabbyWallet = /rabby/i.test(connectedWalletLabel)
-  const canShowResolveAction = Boolean(duel && (duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired)
+  const canShowResolveAction = Boolean(duel && duel.status === 'ResolutionRequested' && isExpired)
   const walletNeedsBaseSwitch = Boolean(address && walletChainId !== selectedChainId)
   const winnerAddress = getWinnerAddress(chain)
   const connectedWalletIsWinner = sameAddress(winnerAddress, address)
@@ -199,12 +199,26 @@ export function DuelDetailPage() {
   const resolveMutation = useMutation({
     mutationFn: async () => {
       if (!metadata || !duel) throw new Error('Relayer metadata is missing for this duel')
+      if (!chain) throw new Error('Base duel data is missing for this duel')
+      if (!chain.counterparty) throw new Error('Base duel has not been accepted yet')
       if (!address) throw new Error('Connect a wallet before resolving with GenLayer')
       const config = relayerConfigQuery.data || (await getRelayerConfig())
-      const selectedProvider = (await connector?.getProvider()) as Parameters<typeof resolveOnGenLayer>[3]
+      const selectedProvider = (await connector?.getProvider()) as Parameters<typeof resolveOnGenLayer>[4]
+      const authenticatedDuel = canonicalizeAuthenticatedDuelData({
+        chainId: selectedChainId,
+        duelId: duel.id,
+        creator: chain.creator,
+        counterparty: chain.counterparty,
+        creatorSide: chain.creatorSide,
+        counterpartySide: oppositeSide(chain.creatorSide),
+        stakeAmountWei: chain.stakeAmount.toString(),
+        expiry: chain.expiry.toString(),
+        status: chain.status === 'None' ? 'Open' : chain.status,
+        metadataHash: chain.metadataHash,
+      })
 
       setResolveStep('Switching wallet to GenLayer StudioNet')
-      const genlayerResult = await resolveOnGenLayer(config, metadata, address, selectedProvider)
+      const genlayerResult = await resolveOnGenLayer(config, metadata, authenticatedDuel, address, selectedProvider)
       setGenlayerTxHash(genlayerResult.txHash)
 
       setResolveStep('Submitting verified GenLayer verdict to Base')

@@ -1,4 +1,12 @@
-import { baseSepolia, type BaseChainId, type GenLayerVerdict } from '@wagr/shared'
+import {
+  authenticatedDuelDataHash,
+  baseSepolia,
+  canonicalGenLayerDuelId,
+  WAGR_RESOLUTION_SCOPE,
+  type AuthenticatedDuelData,
+  type BaseChainId,
+  type GenLayerVerdict,
+} from '@wagr/shared'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRelayerApp, type RelayerStorage } from './app.js'
@@ -42,9 +50,10 @@ test('UNRESOLVED submits INVALID to Base and preserves the reason', async () => 
 
   const app = createRelayerApp({
     config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
     readResolutionFromGenLayer: async () => ({
       verdict: {
-        ...createVerdict('UNRESOLVED'),
+        ...createVerdict('UNRESOLVED', 0, '1'),
         invalid_reason: 'Evidence URL could not be reached: https://example.com',
       },
       genlayerTxHash: validGenLayerTxHash,
@@ -82,12 +91,13 @@ test('YES and NO verdicts submit to Base', async (t) => {
 
       const app = createRelayerApp({
         config,
+        readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
         readResolutionFromGenLayer: async () => ({
-          verdict: createVerdict(verdict, 92),
+          verdict: createVerdict(verdict, 92, '7'),
           genlayerTxHash: validGenLayerTxHash,
         }),
         storage,
-        submitVerdictToBase: async (_config, chainId, duelId, submittedVerdict, confidence, hash) => {
+        submitVerdictToBase: async (_config, chainId, duelId, submittedVerdict, confidence, _metadataHash, hash) => {
           submitted.push({ chainId, duelId, verdict: submittedVerdict, confidence, hash })
           return baseTxHash
         },
@@ -114,9 +124,10 @@ test('bad GenLayer transaction hash returns a clean error', async () => {
 
   const app = createRelayerApp({
     config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
     readResolutionFromGenLayer: async () => {
       readCalled = true
-      return { verdict: createVerdict('YES') }
+      return { verdict: createVerdict('YES', 90, '3') }
     },
     storage,
     submitVerdictToBase: async () => baseTxHash,
@@ -144,8 +155,9 @@ test('unsupported chain ID is rejected before Base submission', async () => {
 
   const app = createRelayerApp({
     config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
     readResolutionFromGenLayer: async () => ({
-      verdict: createVerdict('YES'),
+      verdict: createVerdict('YES', 90, '5'),
       genlayerTxHash: validGenLayerTxHash,
     }),
     storage,
@@ -175,8 +187,9 @@ test('missing chain ID is rejected before Base submission', async () => {
 
   const app = createRelayerApp({
     config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
     readResolutionFromGenLayer: async () => ({
-      verdict: createVerdict('YES'),
+      verdict: createVerdict('YES', 90, '6'),
       genlayerTxHash: validGenLayerTxHash,
     }),
     storage,
@@ -206,6 +219,7 @@ test('unresolved GenLayer transaction lookup returns a clean JSON error', async 
 
   const app = createRelayerApp({
     config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
     readResolutionFromGenLayer: async (_config, _duelId, genlayerTxHash) => {
       assert.equal(genlayerTxHash, validGenLayerTxHash)
       throw new Error('GenLayer resolver has not stored a verdict for this duel yet')
@@ -226,6 +240,158 @@ test('unresolved GenLayer transaction lookup returns a clean JSON error', async 
   assert.deepEqual(body, {
     error: 'GenLayer resolver has not stored a verdict for this duel yet',
   })
+})
+
+test('pre-resolved GenLayer verdict without Base binding is rejected before Base submission', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('9'))
+  let baseSubmitCount = 0
+
+  const app = createRelayerApp({
+    config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
+    readResolutionFromGenLayer: async () => ({
+      verdict: createLegacyVerdict('YES'),
+      genlayerTxHash: validGenLayerTxHash,
+    }),
+    storage,
+    submitVerdictToBase: async () => {
+      baseSubmitCount += 1
+      return baseTxHash
+    },
+    verdictHash: () => verdictHash,
+  })
+
+  const response = await postResolve(app, '9')
+  const body = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.equal(baseSubmitCount, 0)
+  assert.match(body.error, /missing the Wagr Base resolution scope/)
+})
+
+test('accepted duel must be marked resolution requested before GenLayer verdict is bridged', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('12'))
+  let genlayerReadCount = 0
+  let baseSubmitCount = 0
+
+  const app = createRelayerApp({
+    config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId, status: 'Active' }),
+    readResolutionFromGenLayer: async () => {
+      genlayerReadCount += 1
+      return {
+        verdict: createVerdict('YES', 90, '12'),
+        genlayerTxHash: validGenLayerTxHash,
+      }
+    },
+    storage,
+    submitVerdictToBase: async () => {
+      baseSubmitCount += 1
+      return baseTxHash
+    },
+    verdictHash: () => verdictHash,
+  })
+
+  const response = await postResolve(app, '12')
+  const body = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.equal(genlayerReadCount, 0)
+  assert.equal(baseSubmitCount, 0)
+  assert.match(body.error, /must be marked resolution requested/)
+})
+
+test('GenLayer verdict bound to a different duel ID is rejected before Base submission', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('7'))
+  let baseSubmitCount = 0
+
+  const app = createRelayerApp({
+    config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
+    readResolutionFromGenLayer: async () => ({
+      verdict: createVerdict('YES', 90, '8'),
+      genlayerTxHash: validGenLayerTxHash,
+    }),
+    storage,
+    submitVerdictToBase: async () => {
+      baseSubmitCount += 1
+      return baseTxHash
+    },
+    verdictHash: () => verdictHash,
+  })
+
+  const response = await postResolve(app, '7')
+  const body = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.equal(baseSubmitCount, 0)
+  assert.match(body.error, /different Base duel/)
+})
+
+test('GenLayer verdict with mismatched authenticated duel data hash is rejected before Base submission', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('10'))
+  let baseSubmitCount = 0
+
+  const app = createRelayerApp({
+    config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
+    readResolutionFromGenLayer: async () => ({
+      verdict: createVerdict('YES', 90, '10', {
+        authenticated_duel_data_hash: `0x${'12'.repeat(32)}`,
+      }),
+      genlayerTxHash: validGenLayerTxHash,
+    }),
+    storage,
+    submitVerdictToBase: async () => {
+      baseSubmitCount += 1
+      return baseTxHash
+    },
+    verdictHash: () => verdictHash,
+  })
+
+  const response = await postResolve(app, '10')
+  const body = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.equal(baseSubmitCount, 0)
+  assert.match(body.error, /authenticated duel data hash does not match Base/)
+})
+
+test('stored metadata hash must match authenticated Base duel metadata hash', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata({ ...createMetadata('11'), metadataHash: `0x${'99'.repeat(32)}` })
+  let genlayerReadCount = 0
+  let baseSubmitCount = 0
+
+  const app = createRelayerApp({
+    config,
+    readDuelFromBase: async (_config, chainId, duelId) => createBaseDuel(duelId.toString(), { chainId }),
+    readResolutionFromGenLayer: async () => {
+      genlayerReadCount += 1
+      return {
+        verdict: createVerdict('YES', 90, '11'),
+        genlayerTxHash: validGenLayerTxHash,
+      }
+    },
+    storage,
+    submitVerdictToBase: async () => {
+      baseSubmitCount += 1
+      return baseTxHash
+    },
+    verdictHash: () => verdictHash,
+  })
+
+  const response = await postResolve(app, '11')
+  const body = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.equal(genlayerReadCount, 0)
+  assert.equal(baseSubmitCount, 0)
+  assert.match(body.error, /Stored metadata hash does not match/)
 })
 
 function createMemoryStorage(): RelayerStorage {
@@ -259,15 +425,44 @@ function createMetadata(duelId: string): StoredDuelMetadata {
     evidenceUrls: ['https://example.com'],
     allowedSourceTypes: ['official website'],
     category: 'Test',
-    expiryTime: new Date(Date.now() - 60_000).toISOString(),
+    expiryTime: new Date(0).toISOString(),
     creatorSide: 'YES',
     counterpartySide: 'NO',
-    metadataHash: `0x${'00'.repeat(32)}`,
+    metadataHash: `0x${'aa'.repeat(32)}`,
   }
 }
 
-function createVerdict(verdict: GenLayerVerdict['verdict'], confidence = verdict === 'UNRESOLVED' ? 0 : 90): GenLayerVerdict {
+function createBaseDuel(duelId: string, overrides: Partial<AuthenticatedDuelData> = {}): AuthenticatedDuelData {
+  const data: AuthenticatedDuelData = {
+    chainId: baseSepolia.id,
+    duelId,
+    creator: '0x0000000000000000000000000000000000c0ffee',
+    counterparty: '0x000000000000000000000000000000000000d00d',
+    creatorSide: 'YES',
+    counterpartySide: 'NO',
+    stakeAmountWei: '1000000000000000000',
+    expiry: '0',
+    status: 'ResolutionRequested',
+    metadataHash: `0x${'aa'.repeat(32)}`,
+    ...overrides,
+  }
+  return data
+}
+
+function createVerdict(
+  verdict: GenLayerVerdict['verdict'],
+  confidence = verdict === 'UNRESOLVED' ? 0 : 90,
+  duelId = '1',
+  overrides: Partial<GenLayerVerdict> = {},
+): GenLayerVerdict {
+  const baseDuel = createBaseDuel(duelId)
   return {
+    resolution_scope: WAGR_RESOLUTION_SCOPE,
+    duel_id: canonicalGenLayerDuelId(baseDuel.chainId, baseDuel.duelId),
+    base_chain_id: baseDuel.chainId,
+    base_duel_id: baseDuel.duelId,
+    metadata_hash: baseDuel.metadataHash,
+    authenticated_duel_data_hash: authenticatedDuelDataHash(baseDuel),
     verdict,
     confidence,
     evidence_summary: `${verdict} summary`,
@@ -275,7 +470,20 @@ function createVerdict(verdict: GenLayerVerdict['verdict'], confidence = verdict
     reasoning: `${verdict} reasoning`,
     resolved_at: new Date(0).toISOString(),
     invalid_reason: verdict === 'INVALID' || verdict === 'UNRESOLVED' ? `${verdict} reason` : '',
+    ...overrides,
   }
+}
+
+function createLegacyVerdict(verdict: GenLayerVerdict['verdict']): GenLayerVerdict {
+  return {
+    verdict,
+    confidence: 90,
+    evidence_summary: `${verdict} summary`,
+    sources_checked: [],
+    reasoning: `${verdict} reasoning`,
+    resolved_at: new Date(0).toISOString(),
+    invalid_reason: '',
+  } as GenLayerVerdict
 }
 
 function postResolve(app: ReturnType<typeof createRelayerApp>, duelId: string) {

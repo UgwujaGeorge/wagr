@@ -1,4 +1,9 @@
-import { baseSepolia, type GenLayerVerdict } from '@wagr/shared'
+import {
+  authenticatedDuelDataHash,
+  canonicalGenLayerDuelId,
+  type AuthenticatedDuelData,
+  type GenLayerVerdict,
+} from '@wagr/shared'
 import { createClient } from 'genlayer-js'
 import { studionet } from 'genlayer-js/chains'
 import { ExecutionResult, TransactionStatus } from 'genlayer-js/types'
@@ -32,6 +37,7 @@ const GENLAYER_RECEIPT_WAIT_RETRIES = 84
 export async function resolveOnGenLayer(
   config: GenLayerConfig,
   metadata: StoredDuelMetadata,
+  authenticatedDuel: AuthenticatedDuelData,
   walletAddress: `0x${string}`,
   provider: EthereumProvider | undefined,
 ): Promise<GenLayerResolveResult> {
@@ -54,13 +60,23 @@ export async function resolveOnGenLayer(
   })
 
   await prepareGenLayerWallet(config, provider)
-  const genlayerDuelId = getGenLayerDuelId(metadata.chainId, metadata.duelId)
+  const genlayerDuelId = canonicalGenLayerDuelId(metadata.chainId, metadata.duelId)
+  if (authenticatedDuel.chainId !== metadata.chainId || authenticatedDuel.duelId !== metadata.duelId) {
+    throw new Error('Base duel data does not match the selected duel')
+  }
+  if (authenticatedDuel.metadataHash.toLowerCase() !== metadata.metadataHash.toLowerCase()) {
+    throw new Error('Base duel metadata hash does not match relayer metadata')
+  }
+  const duelDataHash = authenticatedDuelDataHash(authenticatedDuel)
 
   const txHash = await writeClient.writeContract({
     address: config.genlayerResolverAddress,
     functionName: 'resolve_duel',
     args: [
       genlayerDuelId,
+      metadata.chainId,
+      metadata.duelId,
+      duelDataHash,
       metadata.claim,
       metadata.resolutionRules,
       metadata.expiryTime,
@@ -98,10 +114,6 @@ export async function resolveOnGenLayer(
     txHash,
     verdict: parseGenLayerVerdict(resolutionJson),
   }
-}
-
-function getGenLayerDuelId(chainId: number, duelId: string): string {
-  return chainId === baseSepolia.id ? duelId : `${chainId}:${duelId}`
 }
 
 async function prepareGenLayerWallet(config: GenLayerConfig, provider: EthereumProvider) {
@@ -203,6 +215,12 @@ function parseGenLayerVerdict(value: string): GenLayerVerdict {
   }
 
   return {
+    resolution_scope: String(parsed.resolution_scope || ''),
+    duel_id: String(parsed.duel_id || ''),
+    base_chain_id: Number(parsed.base_chain_id || 0),
+    base_duel_id: String(parsed.base_duel_id || ''),
+    metadata_hash: String(parsed.metadata_hash || ''),
+    authenticated_duel_data_hash: String(parsed.authenticated_duel_data_hash || ''),
     verdict,
     confidence: Number(parsed.confidence || 0),
     evidence_summary: String(parsed.evidence_summary || ''),

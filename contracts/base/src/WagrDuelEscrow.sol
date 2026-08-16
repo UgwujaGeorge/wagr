@@ -57,6 +57,7 @@ contract WagrDuelEscrow {
     error InvalidVerdict();
     error InvalidConfidence();
     error InvalidVerdictHash();
+    error MetadataHashMismatch();
     error NotParticipant();
     error NotWinner();
     error AlreadyClaimed();
@@ -74,7 +75,7 @@ contract WagrDuelEscrow {
     event DuelAccepted(uint256 indexed duelId, address indexed counterparty);
     event DuelCanceled(uint256 indexed duelId);
     event ResolutionRequested(uint256 indexed duelId);
-    event VerdictSubmitted(uint256 indexed duelId, Verdict verdict, uint16 confidenceBps, bytes32 verdictHash);
+    event VerdictSubmitted(uint256 indexed duelId, Verdict verdict, uint16 confidenceBps, bytes32 metadataHash, bytes32 verdictHash);
     event PayoutClaimed(uint256 indexed duelId, address indexed winner, uint256 amount);
     event RefundClaimed(uint256 indexed duelId, address indexed user, uint256 amount);
     event ResolverUpdated(address indexed oldResolver, address indexed newResolver);
@@ -179,7 +180,7 @@ contract WagrDuelEscrow {
         emit ResolutionRequested(duelId);
     }
 
-    function submitVerdict(uint256 duelId, Verdict verdict, uint16 confidenceBps, bytes32 verdictHash)
+    function submitVerdict(uint256 duelId, Verdict verdict, uint16 confidenceBps, bytes32 metadataHash, bytes32 verdictHash)
         external
         onlyResolver
     {
@@ -188,13 +189,14 @@ contract WagrDuelEscrow {
         if (block.timestamp < duel.expiry) revert DuelNotExpired();
         if (verdict != Verdict.Yes && verdict != Verdict.No && verdict != Verdict.Invalid) revert InvalidVerdict();
         if (confidenceBps > 10_000) revert InvalidConfidence();
+        if (metadataHash != duel.metadataHash) revert MetadataHashMismatch();
         if (verdictHash == bytes32(0)) revert InvalidVerdictHash();
 
         duel.verdict = verdict;
         duel.resolvedAt = block.timestamp;
         duel.status = verdict == Verdict.Invalid ? DuelStatus.Invalid : DuelStatus.Resolved;
 
-        emit VerdictSubmitted(duelId, verdict, confidenceBps, verdictHash);
+        emit VerdictSubmitted(duelId, verdict, confidenceBps, metadataHash, verdictHash);
     }
 
     function claimPayout(uint256 duelId) external nonReentrant {
@@ -286,4 +288,3 @@ contract WagrDuelEscrow {
         if (!ok) revert TransferFailed();
     }
 }
-

@@ -18,6 +18,12 @@ export interface SourceCheck {
 }
 
 export interface GenLayerVerdict {
+  resolution_scope: string
+  duel_id: string
+  base_chain_id: number
+  base_duel_id: string
+  metadata_hash: string
+  authenticated_duel_data_hash: string
   verdict: Verdict
   confidence: number
   evidence_summary: string
@@ -26,4 +32,3 @@ export interface GenLayerVerdict {
   resolved_at: string
   invalid_reason: string
 }
-

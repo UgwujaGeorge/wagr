@@ -92,7 +92,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
 
         uint256 balanceBefore = creator.balance;
         vm.prank(creator);
@@ -109,7 +109,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.No, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.No, 8_500, META, VERDICT_HASH);
 
         uint256 balanceBefore = counterparty.balance;
         vm.prank(counterparty);
@@ -124,7 +124,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Invalid, 4_000, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Invalid, 4_000, META, VERDICT_HASH);
 
         uint256 creatorBefore = creator.balance;
         uint256 counterpartyBefore = counterparty.balance;
@@ -147,7 +147,7 @@ contract WagrDuelEscrowTest {
 
         vm.expectRevert(WagrDuelEscrow.NotResolver.selector);
         vm.prank(stranger);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
     }
 
     function testCannotSubmitVerdictBeforeExpiry() public {
@@ -155,7 +155,7 @@ contract WagrDuelEscrowTest {
 
         vm.expectRevert(WagrDuelEscrow.DuelNotExpired.selector);
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
     }
 
     function testCannotSubmitVerdictTwice() public {
@@ -163,11 +163,11 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
 
         vm.expectRevert(WagrDuelEscrow.InvalidStatus.selector);
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.No, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.No, 8_500, META, VERDICT_HASH);
     }
 
     function testLoserCannotClaimPayout() public {
@@ -175,7 +175,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
 
         vm.expectRevert(WagrDuelEscrow.NotWinner.selector);
         vm.prank(counterparty);
@@ -187,7 +187,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH);
 
         vm.prank(creator);
         escrow.claimPayout(duelId);
@@ -202,7 +202,7 @@ contract WagrDuelEscrowTest {
         vm.warp(block.timestamp + 2 days);
 
         vm.prank(resolver);
-        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Invalid, 4_000, VERDICT_HASH);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Invalid, 4_000, META, VERDICT_HASH);
 
         vm.prank(creator);
         escrow.claimRefund(duelId);
@@ -210,6 +210,15 @@ contract WagrDuelEscrowTest {
         vm.expectRevert(WagrDuelEscrow.AlreadyClaimed.selector);
         vm.prank(creator);
         escrow.claimRefund(duelId);
+    }
+
+    function testVerdictSubmissionRequiresDuelMetadataHash() public {
+        uint256 duelId = _createAcceptedDuel(WagrDuelEscrow.Side.Yes);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert(WagrDuelEscrow.MetadataHashMismatch.selector);
+        vm.prank(resolver);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, keccak256("wrong metadata"), VERDICT_HASH);
     }
 
     function _createDefaultDuel(WagrDuelEscrow.Side side) private returns (uint256 duelId) {

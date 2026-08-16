@@ -1,4 +1,15 @@
-import { baseChainNames, baseMainnet, baseSepolia, isSupportedBaseChainId, type BaseChainId, type GenLayerVerdict } from '@wagr/shared'
+import {
+  authenticatedDuelDataHash,
+  baseChainNames,
+  baseMainnet,
+  baseSepolia,
+  canonicalGenLayerDuelId,
+  isSupportedBaseChainId,
+  WAGR_RESOLUTION_SCOPE,
+  type AuthenticatedDuelData,
+  type BaseChainId,
+  type GenLayerVerdict,
+} from '@wagr/shared'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import type { RelayerConfig } from './config.js'
@@ -17,6 +28,7 @@ export interface RelayerStorage {
 
 export interface RelayerAppDeps {
   config: RelayerConfig
+  readDuelFromBase(config: RelayerConfig, chainId: BaseChainId, duelId: bigint): Promise<AuthenticatedDuelData>
   readResolutionFromGenLayer(
     config: RelayerConfig,
     duelId: string,
@@ -29,6 +41,7 @@ export interface RelayerAppDeps {
     duelId: bigint,
     verdict: SubmittedVerdict,
     confidence: number,
+    metadataHash: `0x${string}`,
     hash: `0x${string}`,
   ): Promise<`0x${string}`>
   verdictHash(verdict: unknown): `0x${string}`
@@ -98,9 +111,13 @@ export function createRelayerApp(deps: RelayerAppDeps) {
       const chainId = parseRequiredChainId(body.chainId)
       const metadata = await storage.getMetadata(chainId, duelId)
       if (!metadata) return c.json({ error: 'metadata not found' }, 404)
+      const numericDuelId = parseBaseDuelId(duelId)
+      const baseDuel = await deps.readDuelFromBase(config, chainId, numericDuelId)
+      assertBaseDuelMatchesMetadata(chainId, duelId, metadata, baseDuel)
 
       const genlayerTxHash = parseGenLayerTxHash(body)
       const result = await deps.readResolutionFromGenLayer(config, getGenLayerDuelId(chainId, duelId), genlayerTxHash)
+      assertResolutionBinding(result.verdict, metadata, baseDuel)
       const hash = deps.verdictHash(result.verdict)
       const baseVerdict = result.verdict.verdict === 'UNRESOLVED' ? 'INVALID' : result.verdict.verdict
       let baseSubmitted = false
@@ -112,9 +129,10 @@ export function createRelayerApp(deps: RelayerAppDeps) {
           baseTxHash = await deps.submitVerdictToBase(
             config,
             chainId,
-            BigInt(duelId),
+            numericDuelId,
             baseVerdict,
             result.verdict.confidence,
+            metadata.metadataHash as `0x${string}`,
             hash,
           )
           baseSubmitted = true
@@ -165,6 +183,13 @@ function parseGenLayerTxHash(body: Record<string, unknown>): `0x${string}` | und
   return body.genlayerTxHash as `0x${string}`
 }
 
+function parseBaseDuelId(duelId: string): bigint {
+  if (!/^[0-9]+$/.test(duelId)) {
+    throw new Error('Invalid Base duel ID. Expected an unsigned integer.')
+  }
+  return BigInt(duelId)
+}
+
 function parseRequiredChainId(value: unknown): BaseChainId {
   if (value == null || value === '') {
     throw new Error(`chainId is required. Supported chains are ${baseSepolia.id} (${baseChainNames[baseSepolia.id]}) and ${baseMainnet.id} (${baseChainNames[baseMainnet.id]}).`)
@@ -186,5 +211,52 @@ function parseOptionalChainId(value: unknown): BaseChainId | undefined {
 }
 
 function getGenLayerDuelId(chainId: BaseChainId, duelId: string): string {
-  return chainId === baseSepolia.id ? duelId : `${chainId}:${duelId}`
+  return canonicalGenLayerDuelId(chainId, duelId)
+}
+
+function assertBaseDuelMatchesMetadata(
+  chainId: BaseChainId,
+  duelId: string,
+  metadata: StoredDuelMetadata,
+  baseDuel: AuthenticatedDuelData,
+) {
+  if (baseDuel.chainId !== chainId || baseDuel.duelId !== duelId) {
+    throw new Error('Stored metadata does not match the requested Base duel ID')
+  }
+  if (baseDuel.metadataHash.toLowerCase() !== metadata.metadataHash.toLowerCase()) {
+    throw new Error('Stored metadata hash does not match the Base duel metadata hash')
+  }
+  if (baseDuel.creatorSide !== metadata.creatorSide || baseDuel.counterpartySide !== metadata.counterpartySide) {
+    throw new Error('Stored duel sides do not match the Base duel')
+  }
+
+  const metadataExpiry = Math.floor(new Date(metadata.expiryTime).getTime() / 1000)
+  if (!Number.isFinite(metadataExpiry) || baseDuel.expiry !== String(metadataExpiry)) {
+    throw new Error('Stored expiry does not match the Base duel expiry')
+  }
+  if (baseDuel.status !== 'ResolutionRequested') {
+    throw new Error('Base duel must be marked resolution requested before GenLayer submission')
+  }
+}
+
+function assertResolutionBinding(
+  verdict: GenLayerVerdict,
+  metadata: StoredDuelMetadata,
+  baseDuel: AuthenticatedDuelData,
+) {
+  const expectedDuelId = canonicalGenLayerDuelId(baseDuel.chainId, baseDuel.duelId)
+  if (verdict.resolution_scope !== WAGR_RESOLUTION_SCOPE) {
+    throw new Error('GenLayer verdict is missing the Wagr Base resolution scope')
+  }
+  if (verdict.duel_id !== expectedDuelId || verdict.base_duel_id !== baseDuel.duelId || verdict.base_chain_id !== baseDuel.chainId) {
+    throw new Error('GenLayer verdict is bound to a different Base duel')
+  }
+  if (verdict.metadata_hash.toLowerCase() !== metadata.metadataHash.toLowerCase()) {
+    throw new Error('GenLayer verdict metadata hash does not match the Base duel')
+  }
+
+  const expectedDuelDataHash = authenticatedDuelDataHash(baseDuel)
+  if (verdict.authenticated_duel_data_hash.toLowerCase() !== expectedDuelDataHash.toLowerCase()) {
+    throw new Error('GenLayer verdict authenticated duel data hash does not match Base')
+  }
 }

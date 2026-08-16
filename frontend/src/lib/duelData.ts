@@ -17,6 +17,7 @@ export interface ChainDuelRecord {
   creatorSide: DuelSide
   stakeAmount: bigint
   expiry: bigint
+  metadataHash: `0x${string}`
   status: DuelStatus | 'None'
   verdict: VerdictName
   creatorClaimed: boolean
@@ -190,6 +191,7 @@ function normalizeChainDuel(value: unknown): ChainDuelRecord | undefined {
     creatorSide: creatorSideId === 2 ? 'NO' : 'YES',
     stakeAmount: at<bigint>('stakeAmount', 3) || 0n,
     expiry: at<bigint>('expiry', 4) || 0n,
+    metadataHash: (at<string>('metadataHash', 5) || `0x${'00'.repeat(32)}`) as `0x${string}`,
     status: duelStatusNames[statusId] || 'None',
     verdict: verdictNames[verdictId] || 'None',
     creatorClaimed: Boolean(at<boolean>('creatorClaimed', 8)),
