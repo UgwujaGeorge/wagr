@@ -219,9 +219,13 @@ export function DuelDetailPage() {
 
       setResolveStep('Switching wallet to GenLayer StudioNet')
       const genlayerResult = await resolveOnGenLayer(config, metadata, authenticatedDuel, address, selectedProvider)
-      setGenlayerTxHash(genlayerResult.txHash)
+      if (genlayerResult.txHash) setGenlayerTxHash(genlayerResult.txHash)
 
-      setResolveStep('Submitting verified GenLayer verdict to Base')
+      setResolveStep(
+        genlayerResult.alreadyResolved
+          ? 'GenLayer already resolved this duel. Submitting the stored verdict to Base'
+          : 'Submitting verified GenLayer verdict to Base',
+      )
       return submitGenLayerResolution(selectedChainId, duel.id, genlayerResult.txHash)
     },
     onSuccess: () => {

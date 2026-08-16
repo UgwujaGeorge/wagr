@@ -65,10 +65,10 @@ export function getRelayerConfig(): Promise<GenLayerConfig> {
 export function submitGenLayerResolution(
   chainId: BaseChainId,
   duelId: string,
-  genlayerTxHash: `0x${string}`,
+  genlayerTxHash?: `0x${string}`,
 ): Promise<StoredResolution & { baseSubmitError?: string; nextStep: string }> {
   return relayerRequest(`/resolve/${duelId}`, {
     method: 'POST',
-    body: JSON.stringify({ chainId, genlayerTxHash }),
+    body: JSON.stringify(genlayerTxHash ? { chainId, genlayerTxHash } : { chainId }),
   })
 }

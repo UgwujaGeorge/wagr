@@ -27,8 +27,10 @@ export interface GenLayerConfig {
 }
 
 export interface GenLayerResolveResult {
-  txHash: `0x${string}`
+  /** Absent when GenLayer had already resolved this duel and no new transaction was sent. */
+  txHash?: `0x${string}`
   verdict: GenLayerVerdict
+  alreadyResolved: boolean
 }
 
 const GENLAYER_RECEIPT_WAIT_INTERVAL_MS = 5_000
@@ -68,6 +70,15 @@ export async function resolveOnGenLayer(
     throw new Error('Base duel metadata hash does not match relayer metadata')
   }
   const duelDataHash = authenticatedDuelDataHash(authenticatedDuel)
+
+  // GenLayer rejects a second resolve_duel for the same duel. If a previous
+  // attempt resolved on GenLayer but never reached Base, resolving again would
+  // fail here and leave the duel permanently stuck, so reuse the stored verdict
+  // and let the caller retry only the Base submission.
+  const existing = await readStoredVerdict(readClient, config, genlayerDuelId)
+  if (existing && verdictMatchesDuel(existing, genlayerDuelId, duelDataHash, metadata.metadataHash)) {
+    return { verdict: existing, alreadyResolved: true }
+  }
 
   const txHash = await writeClient.writeContract({
     address: config.genlayerResolverAddress,
@@ -113,7 +124,42 @@ export async function resolveOnGenLayer(
   return {
     txHash,
     verdict: parseGenLayerVerdict(resolutionJson),
+    alreadyResolved: false,
   }
+}
+
+type GenLayerReadClient = ReturnType<typeof createClient>
+
+async function readStoredVerdict(
+  readClient: GenLayerReadClient,
+  config: GenLayerConfig,
+  genlayerDuelId: string,
+): Promise<GenLayerVerdict | undefined> {
+  try {
+    const resolutionJson = await readClient.readContract({
+      address: config.genlayerResolverAddress as `0x${string}`,
+      functionName: 'get_resolution_json',
+      args: [genlayerDuelId],
+    })
+    if (typeof resolutionJson !== 'string') return undefined
+    return parseGenLayerVerdict(resolutionJson)
+  } catch {
+    // A read failure here must not block a first-time resolution.
+    return undefined
+  }
+}
+
+function verdictMatchesDuel(
+  verdict: GenLayerVerdict,
+  genlayerDuelId: string,
+  duelDataHash: `0x${string}`,
+  metadataHash: string,
+): boolean {
+  return (
+    verdict.duel_id === genlayerDuelId &&
+    verdict.metadata_hash.toLowerCase() === metadataHash.toLowerCase() &&
+    verdict.authenticated_duel_data_hash.toLowerCase() === duelDataHash.toLowerCase()
+  )
 }
 
 async function prepareGenLayerWallet(config: GenLayerConfig, provider: EthereumProvider) {
