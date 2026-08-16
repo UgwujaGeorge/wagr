@@ -26,7 +26,10 @@ The resolver should accept:
 
 ```json
 {
-  "duel_id": "123",
+  "duel_id": "84532:123",
+  "base_chain_id": 84532,
+  "base_duel_id": "123",
+  "authenticated_duel_data_hash": "0x...",
   "claim": "Will Project Atlas launch its public testnet before July 31, 2026 23:59 UTC?",
   "resolution_rules": "YES if an official Project Atlas website, docs page, GitHub release, or verified social account publicly announces that public testnet is live before expiry. NO if no allowed source confirms launch before expiry. INVALID if sources are unavailable or claim cannot be resolved.",
   "expiry_time": "2026-07-31T23:59:00Z",
@@ -52,6 +55,12 @@ GenLayer should return exactly:
 
 ```json
 {
+  "resolution_scope": "wagr.base.genlayer.v1",
+  "duel_id": "84532:123",
+  "base_chain_id": 84532,
+  "base_duel_id": "123",
+  "metadata_hash": "0x...",
+  "authenticated_duel_data_hash": "0x...",
   "verdict": "YES",
   "confidence": 86,
   "evidence_summary": "Official docs page states public testnet launched on 2026-07-24.",
@@ -128,6 +137,9 @@ class WagrResolver(gl.Contract):
     def resolve_duel(
         self,
         duel_id: str,
+        base_chain_id: int,
+        base_duel_id: str,
+        authenticated_duel_data_hash: str,
         claim: str,
         resolution_rules: str,
         expiry_time: str,
@@ -302,9 +314,12 @@ Base submission:
   "duel_id": 123,
   "verdict": "YES",
   "confidence_bps": 8600,
+  "metadata_hash": "0x...",
   "verdict_hash": "0x..."
 }
 ```
+
+The relayer must read `duels(duelId)` from Base before submitting, verify the stored metadata hash and duel fields match the authenticated Base state, require the Base status to be `ResolutionRequested`, verify the GenLayer verdict binding fields match the same Base duel and authenticated duel data hash, and only then submit the compact verdict plus `metadata_hash` and full verdict hash to Base.
 
 ## Risks
 
@@ -325,4 +340,3 @@ Base submission:
 - Compare only key fields.
 - Refund INVALID/UNRESOLVED.
 - Show full reasoning in UI.
-

@@ -3,7 +3,7 @@
     "chainId": 84532,
     "name": "Base Sepolia",
     "rpcUrlEnv": "BASE_SEPOLIA_RPC_URL",
-    "escrowContract": "0xF109bA06578792D624F45a4E67f8aB4f44693D39",
+    "escrowContract": "0x1854520Dbc6BE60e5298c4e5d13a8DdC08f91656",
     "explorer": "https://sepolia.basescan.org"
   },
   "baseMainnet": {
@@ -15,6 +15,6 @@
   },
   "genlayer": {
     "network": "StudioNet",
-    "resolverContract": "0x9d0A580Fc57F1F429b00F6c7d20Cf62C2Ba3cceb"
+    "resolverContract": "0xa7976eAc9eE972C371b01B085D365Cea09d84DaD"
   }
 }
