@@ -1,7 +1,7 @@
 import { baseChainNames, baseMainnet, baseSepolia, isSupportedBaseChainId, type BaseChainId } from '@wagr/shared'
 import { isAddress, type Hash } from 'viem'
 
-export const relayerUrl = import.meta.env.VITE_RELAYER_URL || 'https://wagr-relayer.onrender.com'
+export const relayerUrl = import.meta.env.VITE_RELAYER_URL || 'https://wagr-relayer-r105.onrender.com'
 
 export interface FrontendBaseNetwork {
   chain: typeof baseSepolia | typeof baseMainnet
