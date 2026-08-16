@@ -7,8 +7,10 @@ services:
     startCommand: bash relayer/start.sh
     healthCheckPath: /health
     envVars:
-      - key: NODE_ENV
-        value: production
+      # NODE_ENV is deliberately not set here. Render applies service env vars
+      # during the build, and NODE_ENV=production makes `npm ci` skip
+      # devDependencies, which drops the typescript/@types/node needed to
+      # compile. relayer/start.sh exports it at runtime instead.
       - key: BASE_SEPOLIA_RPC_URL
         value: https://sepolia.base.org
       - key: BASE_MAINNET_RPC_URL
