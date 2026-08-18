@@ -1,6 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { wagrDuelEscrowAbi, WAGR_DATA_SUFFIX } from '@wagr/shared'
-import { keccak256, parseEther, parseEventLogs, stringToHex } from 'viem'
+import {
+  deriveAllowedDomains,
+  duelMetadataHash,
+  evidencePolicyError,
+  wagrDuelEscrowAbi,
+  WAGR_DATA_SUFFIX,
+} from '@wagr/shared'
+import { parseEther, parseEventLogs } from 'viem'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { WrongNetworkModal } from '../components/WrongNetworkModal'
@@ -33,18 +39,22 @@ export function CreateDuelPage() {
   const { writeContract, isPending, data, error } = useWriteContract()
   const { data: receipt, isLoading: isConfirming } = useWaitForTransactionReceipt({ hash: data })
 
-  const metadata = useMemo(
-    () => ({
+  const metadata = useMemo(() => {
+    const evidenceUrls = evidence.split('\n').map((url) => url.trim()).filter(Boolean)
+    return {
       claim,
       resolutionRules: rules,
-      evidenceUrls: evidence.split('\n').map((url) => url.trim()).filter(Boolean),
+      evidenceUrls,
       allowedSourceTypes: ['official website', 'official docs', 'GitHub issue', 'GitHub release', 'verified public announcement'],
+      // The host allowlist is derived from the evidence URLs and committed with
+      // them, so the resolver can reject an out-of-policy fetch deterministically.
+      allowedDomains: deriveAllowedDomains(evidenceUrls),
       category: 'GitHub',
-    }),
-    [claim, rules, evidence],
-  )
+    }
+  }, [claim, rules, evidence])
 
-  const metadataHash = useMemo(() => keccak256(stringToHex(JSON.stringify(metadata))), [metadata])
+  const metadataHash = useMemo(() => duelMetadataHash(metadata), [metadata])
+  const policyError = useMemo(() => evidencePolicyError(metadata), [metadata])
 
   useEffect(() => {
     if (error) {

@@ -20,3 +20,5 @@ contracts/base/broadcast/
 *.log
 .DS_Store
 .vercel
+
+.wagr-attester-keys.local

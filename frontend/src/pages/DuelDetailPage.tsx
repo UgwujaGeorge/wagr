@@ -196,6 +196,58 @@ export function DuelDetailPage() {
     )
   }
 
+  async function challengeVerdict() {
+    if (!duel) return
+    if (!connectedWalletIsParticipant) {
+      setBaseActionError('Only duel participants can challenge a verdict.')
+      return
+    }
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'challengeVerdict',
+        args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
+      }),
+    )
+  }
+
+  async function finalizeVerdict() {
+    if (!duel) return
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: duel.status === 'Challenged' ? 'finalizeChallenge' : 'finalizeVerdict',
+        args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
+      }),
+    )
+  }
+
+  async function markResolutionTimedOut() {
+    if (!duel) return
+    const contractAddress = getEscrowAddress(selectedChainId)
+    if (!contractAddress) return
+    await runBaseAction(() =>
+      writeContract({
+        chainId: selectedChainId,
+        address: contractAddress,
+        abi: wagrDuelEscrowAbi,
+        functionName: 'markResolutionTimedOut',
+        args: [BigInt(duel.id)],
+        dataSuffix: WAGR_DATA_SUFFIX,
+      }),
+    )
+  }
+
   const resolveMutation = useMutation({
     mutationFn: async () => {
       if (!metadata || !duel) throw new Error('Relayer metadata is missing for this duel')
@@ -204,8 +256,11 @@ export function DuelDetailPage() {
       if (!address) throw new Error('Connect a wallet before resolving with GenLayer')
       const config = relayerConfigQuery.data || (await getRelayerConfig())
       const selectedProvider = (await connector?.getProvider()) as Parameters<typeof resolveOnGenLayer>[4]
+      const escrowAddress = getEscrowAddress(selectedChainId)
+      if (!escrowAddress) throw new Error('Base escrow address is not configured for this network')
       const authenticatedDuel = canonicalizeAuthenticatedDuelData({
         chainId: selectedChainId,
+        escrowAddress,
         duelId: duel.id,
         creator: chain.creator,
         counterparty: chain.counterparty,
@@ -226,6 +281,12 @@ export function DuelDetailPage() {
           ? 'GenLayer already resolved this duel. Submitting the stored verdict to Base'
           : 'Submitting verified GenLayer verdict to Base',
       )
+      if (!genlayerResult.txHash) {
+        throw new Error(
+          'GenLayer already holds a verdict for this duel but its transaction hash is unknown. ' +
+            'Re-run resolution from the wallet that submitted it.',
+        )
+      }
       return submitGenLayerResolution(selectedChainId, duel.id, genlayerResult.txHash)
     },
     onSuccess: () => {
@@ -319,6 +380,28 @@ export function DuelDetailPage() {
               onClick={() => resolveMutation.mutate()}
             >
               {resolveMutation.isPending ? 'Resolving' : 'Resolve with GenLayer'}
+            </button>
+          )}
+          {duel.status === 'VerdictProposed' && (
+            <>
+              <button className="secondary-action" disabled={onchainActionDisabled} onClick={finalizeVerdict}>
+                {isPending || isConfirming ? 'Finalizing' : 'Finalize verdict'}
+              </button>
+              {connectedWalletIsParticipant && (
+                <button className="secondary-action" disabled={onchainActionDisabled} onClick={challengeVerdict}>
+                  {isPending || isConfirming ? 'Challenging' : 'Challenge verdict'}
+                </button>
+              )}
+            </>
+          )}
+          {duel.status === 'Challenged' && (
+            <button className="secondary-action" disabled={onchainActionDisabled} onClick={finalizeVerdict}>
+              {isPending || isConfirming ? 'Settling' : 'Settle challenge as refundable'}
+            </button>
+          )}
+          {(duel.status === 'Active' || duel.status === 'ResolutionRequested') && isExpired && (
+            <button className="secondary-action" disabled={onchainActionDisabled} onClick={markResolutionTimedOut}>
+              {isPending || isConfirming ? 'Releasing' : 'Release stakes (timed out)'}
             </button>
           )}
           {duel.status === 'Resolved' && <Link className="primary-action" to={`/results/${duel.id}`}>View result</Link>}

@@ -36,5 +36,6 @@ export function statusTone(status: DuelStatus): string {
   if (status === 'Active') return 'tone-active'
   if (status === 'Resolved' || status === 'Paid') return 'tone-resolved'
   if (status === 'Invalid' || status === 'Canceled') return 'tone-invalid'
+  if (status === 'Challenged') return 'tone-invalid'
   return 'tone-pending'
 }

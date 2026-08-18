@@ -3,18 +3,39 @@
     "chainId": 84532,
     "name": "Base Sepolia",
     "rpcUrlEnv": "BASE_SEPOLIA_RPC_URL",
-    "escrowContract": "0x1854520Dbc6BE60e5298c4e5d13a8DdC08f91656",
-    "explorer": "https://sepolia.basescan.org"
+    "escrowContract": "0xA93956bc90698b4Bf9080085c9047F55625381aE",
+    "explorer": "https://sepolia.basescan.org",
+    "deployedAt": "2026-08-19",
+    "supersedes": "0x1854520Dbc6BE60e5298c4e5d13a8DdC08f91656"
   },
   "baseMainnet": {
     "chainId": 8453,
     "name": "Base Mainnet",
     "rpcUrlEnv": "BASE_MAINNET_RPC_URL",
-    "escrowContract": "0x602d022B9E9c415F399F77d5be69404F2219dc99",
-    "explorer": "https://basescan.org"
+    "escrowContract": "0x13dF0E047a7D9db5fe4d7918D1663a04eD0bD09d",
+    "explorer": "https://basescan.org",
+    "deployedAt": "2026-08-19",
+    "supersedes": "0x602d022B9E9c415F399F77d5be69404F2219dc99"
   },
   "genlayer": {
     "network": "StudioNet",
-    "resolverContract": "0xa7976eAc9eE972C371b01B085D365Cea09d84DaD"
+    "resolverContract": "0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e",
+    "deployedAt": "2026-08-19",
+    "supersedes": "0xa7976eAc9eE972C371b01B085D365Cea09d84DaD"
+  },
+  "attesters": {
+    "threshold": 2,
+    "challengeWindowSeconds": 1800,
+    "resolutionGracePeriodSeconds": 604800,
+    "addresses": [
+      "0xeCb9f75f020815651D1ca6591fD64cDC1A02Ca75",
+      "0x2F85b1f41ceF15Dc318350e6FD77F98801e1a6FC",
+      "0x4F14eDc0Ac77F1E285D915042Ec2E84E9Bf0b347"
+    ],
+    "roles": {
+      "0xeCb9f75f020815651D1ca6591fD64cDC1A02Ca75": "relayer service (Render)",
+      "0x2F85b1f41ceF15Dc318350e6FD77F98801e1a6FC": "independent attester service (Render)",
+      "0x4F14eDc0Ac77F1E285D915042Ec2E84E9Bf0b347": "offline break-glass key held by the project owner"
+    }
   }
 }

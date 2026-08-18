@@ -12,7 +12,7 @@
     "build": "npm run build -w @wagr/shared && npm run build -w @wagr/relayer && npm run build -w @wagr/frontend",
     "dev:frontend": "npm run dev -w @wagr/frontend",
     "dev:relayer": "npm run dev -w @wagr/relayer",
-    "test": "npm run relayer:test && npm run contracts:test && npm run genlayer:test",
+    "test": "npm run relayer:test && npm run contracts:test && npm run genlayer:test && npm run verify:encodings",
     "relayer:test": "npm run test -w @wagr/relayer",
     "contracts:test": "forge test --root contracts/base",
     "genlayer:test": "python3 -m unittest discover -s genlayer/tests",
@@ -23,6 +23,8 @@
     "deploy:base-sepolia": "npm run contracts:deploy:base-sepolia",
     "deploy:base-mainnet": "npm run contracts:deploy:base-mainnet",
     "genlayer:schema": "node scripts/check-genlayer-resolver-schema.mjs",
-    "genlayer:deploy": "node scripts/deploy-genlayer-resolver.mjs"
+    "genlayer:deploy": "node scripts/deploy-genlayer-resolver.mjs",
+    "verify:encodings": "node scripts/verify-binding-encodings.mjs",
+    "contracts:abi": "forge build --root contracts/base && node scripts/generate-abi.mjs"
   }
 }

@@ -1,6 +1,7 @@
 import {
   authenticatedDuelDataHash,
   canonicalGenLayerDuelId,
+  duelMetadataHash,
   type AuthenticatedDuelData,
   type GenLayerVerdict,
 } from '@wagr/shared'
@@ -69,6 +70,11 @@ export async function resolveOnGenLayer(
   if (authenticatedDuel.metadataHash.toLowerCase() !== metadata.metadataHash.toLowerCase()) {
     throw new Error('Base duel metadata hash does not match relayer metadata')
   }
+  // Re-derive the commitment locally: the resolver will reject anything else,
+  // and failing here gives a far clearer error than a GenLayer revert.
+  if (duelMetadataHash(toCommitted(metadata)).toLowerCase() !== metadata.metadataHash.toLowerCase()) {
+    throw new Error('Relayer metadata does not match its own committed hash')
+  }
   const duelDataHash = authenticatedDuelDataHash(authenticatedDuel)
 
   // GenLayer rejects a second resolve_duel for the same duel. If a previous
@@ -93,6 +99,8 @@ export async function resolveOnGenLayer(
       metadata.expiryTime,
       metadata.evidenceUrls,
       metadata.allowedSourceTypes,
+      metadata.allowedDomains,
+      metadata.category || '',
       metadata.creatorSide,
       metadata.counterpartySide,
       metadata.metadataHash,
@@ -125,6 +133,17 @@ export async function resolveOnGenLayer(
     txHash,
     verdict: parseGenLayerVerdict(resolutionJson),
     alreadyResolved: false,
+  }
+}
+
+function toCommitted(metadata: StoredDuelMetadata) {
+  return {
+    claim: metadata.claim,
+    resolutionRules: metadata.resolutionRules,
+    evidenceUrls: metadata.evidenceUrls,
+    allowedSourceTypes: metadata.allowedSourceTypes,
+    allowedDomains: metadata.allowedDomains,
+    category: metadata.category || '',
   }
 }
 

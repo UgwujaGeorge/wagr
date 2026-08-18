@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { wagrDuelEscrowAbi, type BaseChainId, type DuelSide, type DuelStatus } from '@wagr/shared'
+import { duelStatusNames, wagrDuelEscrowAbi, type BaseChainId, type DuelSide, type DuelStatus } from '@wagr/shared'
 import { formatEther, zeroAddress } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { getEscrowAddress } from './contracts'
@@ -8,7 +8,7 @@ import { type Duel } from './duels'
 import { getDuelMetadata, listDuelMetadata, type StoredDuelMetadata } from './relayer'
 
 type VerdictName = 'None' | 'YES' | 'NO' | 'INVALID'
-const duelStatusNames = ['None', 'Open', 'Active', 'ResolutionRequested', 'Resolved', 'Invalid', 'Canceled', 'Paid'] as const
+
 const verdictNames = ['None', 'YES', 'NO', 'INVALID'] as const
 
 export interface ChainDuelRecord {

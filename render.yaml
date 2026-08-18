@@ -1,4 +1,7 @@
 services:
+  # The relayer. It pays gas for `submitVerdict` and collects attestations, but
+  # its own key carries no authority: the escrow only accepts a verdict backed
+  # by a quorum of registered attester signatures.
   - type: web
     name: wagr-relayer
     runtime: node
@@ -16,9 +19,9 @@ services:
       - key: BASE_MAINNET_RPC_URL
         value: https://mainnet.base.org
       - key: BASE_SEPOLIA_ESCROW_ADDRESS
-        value: 0x1854520Dbc6BE60e5298c4e5d13a8DdC08f91656
+        value: 0xA93956bc90698b4Bf9080085c9047F55625381aE
       - key: BASE_MAINNET_ESCROW_ADDRESS
-        value: 0x602d022B9E9c415F399F77d5be69404F2219dc99
+        value: 0x13dF0E047a7D9db5fe4d7918D1663a04eD0bD09d
       - key: GENLAYER_NETWORK
         value: studionet
       - key: GENLAYER_RPC_URL
@@ -26,7 +29,54 @@ services:
       - key: GENLAYER_EXPLORER_URL
         value: https://explorer-studio.genlayer.com
       - key: GENLAYER_RESOLVER_ADDRESS
-        value: 0xa7976eAc9eE972C371b01B085D365Cea09d84DaD
-      # Must match the escrow's authorized resolver address. Set per environment.
+        value: 0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e
+      # A verdict that GenLayer has only ACCEPTED can still be overturned on
+      # appeal, so attesting waits for FINALIZED.
+      - key: WAGR_REQUIRE_GENLAYER_FINALITY
+        value: "true"
+      # Independent co-signer. Its key lives on a different service so a
+      # compromise of this one cannot reach the threshold alone.
+      - key: WAGR_ATTESTER_ENDPOINTS
+        value: https://wagr-attester.onrender.com
+      # Gas payer. Set per environment.
       - key: RELAYER_PRIVATE_KEY
+        sync: false
+      # This service's attester identity. Set per environment.
+      - key: WAGR_ATTESTER_PRIVATE_KEY
+        sync: false
+      - key: WAGR_ATTESTER_AUTH_TOKEN
+        sync: false
+
+  # Second attester. Runs the same verification code under a different key and
+  # a different service, holds no gas key, and never writes to Base. It exists
+  # so that no single compromised process can authorize a payout.
+  - type: web
+    name: wagr-attester
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build -w @wagr/shared && npm run build -w @wagr/relayer
+    startCommand: bash relayer/start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: BASE_SEPOLIA_RPC_URL
+        value: https://sepolia.base.org
+      - key: BASE_MAINNET_RPC_URL
+        value: https://mainnet.base.org
+      - key: BASE_SEPOLIA_ESCROW_ADDRESS
+        value: 0xA93956bc90698b4Bf9080085c9047F55625381aE
+      - key: BASE_MAINNET_ESCROW_ADDRESS
+        value: 0x13dF0E047a7D9db5fe4d7918D1663a04eD0bD09d
+      - key: GENLAYER_NETWORK
+        value: studionet
+      - key: GENLAYER_RPC_URL
+        value: https://studio.genlayer.com/api
+      - key: GENLAYER_EXPLORER_URL
+        value: https://explorer-studio.genlayer.com
+      - key: GENLAYER_RESOLVER_ADDRESS
+        value: 0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e
+      - key: WAGR_REQUIRE_GENLAYER_FINALITY
+        value: "true"
+      - key: WAGR_ATTESTER_PRIVATE_KEY
+        sync: false
+      - key: WAGR_ATTESTER_AUTH_TOKEN
         sync: false
