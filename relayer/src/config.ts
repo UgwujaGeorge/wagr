@@ -13,11 +13,20 @@ export interface BaseNetworkConfig {
 export interface RelayerConfig {
   port: number
   baseNetworks: Record<BaseChainId, BaseNetworkConfig>
+  /** Pays gas for `submitVerdict`. Carries no authority of its own. */
   relayerPrivateKey?: `0x${string}`
+  /** This process's attester identity, if it is also acting as an attester. */
+  attesterPrivateKey?: `0x${string}`
+  /** Independent attester services asked to co-sign each verdict. */
+  attesterEndpoints: string[]
+  /** Shared secret required by this process's own `/attest` endpoint. */
+  attesterAuthToken?: string
   genlayerNetwork: string
   genlayerRpcUrl: string
   genlayerExplorerUrl: string
   genlayerResolverAddress?: `0x${string}`
+  /** Require GenLayer FINALIZED rather than merely ACCEPTED before attesting. */
+  requireGenlayerFinality: boolean
 }
 
 function optionalAddress(name: string): `0x${string}` | undefined {
@@ -58,6 +67,13 @@ export function loadConfig(): RelayerConfig {
       },
     },
     relayerPrivateKey: optionalPrivateKey('RELAYER_PRIVATE_KEY'),
+    attesterPrivateKey: optionalPrivateKey('WAGR_ATTESTER_PRIVATE_KEY'),
+    attesterEndpoints: (process.env.WAGR_ATTESTER_ENDPOINTS || '')
+      .split(',')
+      .map((endpoint) => endpoint.trim())
+      .filter(Boolean),
+    attesterAuthToken: process.env.WAGR_ATTESTER_AUTH_TOKEN || undefined,
+    requireGenlayerFinality: process.env.WAGR_REQUIRE_GENLAYER_FINALITY !== 'false',
     genlayerNetwork: process.env.GENLAYER_NETWORK || 'studionet',
     genlayerRpcUrl: process.env.GENLAYER_RPC_URL || 'https://studio.genlayer.com/api',
     genlayerExplorerUrl: process.env.GENLAYER_EXPLORER_URL || 'https://explorer-studio.genlayer.com',

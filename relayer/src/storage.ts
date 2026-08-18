@@ -19,6 +19,8 @@ export interface StoredResolution {
   verdict: GenLayerVerdict
   verdictHash: `0x${string}`
   genlayerTxHash?: `0x${string}`
+  /** Attester addresses whose signatures authorized the Base submission. */
+  attesters?: `0x${string}`[]
   baseSubmitted: boolean
   baseTxHash?: `0x${string}`
   createdAt: string

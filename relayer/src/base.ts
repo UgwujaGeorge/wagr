@@ -6,6 +6,7 @@ import {
   type BaseChainId,
   type DuelSide,
   type DuelStatus,
+  duelStatusNames,
   wagrDuelEscrowAbi,
   WAGR_DATA_SUFFIX,
 } from '@wagr/shared'
@@ -63,9 +64,11 @@ export async function submitVerdictToBase(
   chainId: BaseChainId,
   duelId: bigint,
   verdict: keyof typeof baseVerdictEnum,
-  confidence: number,
+  confidenceBps: number,
   metadataHash: `0x${string}`,
-  hash: `0x${string}`,
+  verdictHash: `0x${string}`,
+  genlayerTxHash: `0x${string}`,
+  signatures: `0x${string}`[],
 ): Promise<Hash> {
   const network = getNetworkConfig(config, chainId)
   if (!network.escrowAddress) {
@@ -82,21 +85,34 @@ export async function submitVerdictToBase(
     client: { public: publicClient, wallet: walletClient },
   })
 
-  const confidenceBps = Math.max(0, Math.min(10000, Math.round(confidence * 100)))
-  return contract.write.submitVerdict([duelId, baseVerdictEnum[verdict], confidenceBps, metadataHash, hash])
+  return contract.write.submitVerdict([
+    duelId,
+    baseVerdictEnum[verdict],
+    confidenceBps,
+    metadataHash,
+    verdictHash,
+    genlayerTxHash,
+    signatures,
+  ])
+}
+
+/** Attestations the escrow currently requires for a standard submission. */
+export async function readAttesterThreshold(config: RelayerConfig, chainId: BaseChainId): Promise<number> {
+  const network = getNetworkConfig(config, chainId)
+  if (!network.escrowAddress) {
+    throw new Error(`${network.name} escrow address is required to read the attester threshold`)
+  }
+  const { publicClient } = createBaseClients(config, chainId)
+  const threshold = await publicClient.readContract({
+    address: network.escrowAddress,
+    abi: wagrDuelEscrowAbi,
+    functionName: 'threshold',
+  })
+  return Number(threshold)
 }
 
 const sideNames: Array<DuelSide | 'None'> = ['None', 'YES', 'NO']
-const statusNames: Array<DuelStatus | 'None'> = [
-  'None',
-  'Open',
-  'Active',
-  'ResolutionRequested',
-  'Resolved',
-  'Invalid',
-  'Canceled',
-  'Paid',
-]
+const statusNames: Array<DuelStatus | 'None'> = [...duelStatusNames]
 
 export async function readDuelFromBase(
   config: RelayerConfig,
@@ -136,6 +152,7 @@ export async function readDuelFromBase(
 
   return canonicalizeAuthenticatedDuelData({
     chainId,
+    escrowAddress: network.escrowAddress,
     duelId: duelId.toString(),
     creator,
     counterparty,
@@ -162,6 +179,8 @@ function isDuelStatus(value: unknown): value is DuelStatus {
     value === 'Resolved' ||
     value === 'Invalid' ||
     value === 'Canceled' ||
-    value === 'Paid'
+    value === 'Paid' ||
+    value === 'VerdictProposed' ||
+    value === 'Challenged'
   )
 }

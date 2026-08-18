@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server'
 import { createRelayerApp } from './app.js'
-import { readDuelFromBase, submitVerdictToBase, verdictHash } from './base.js'
+import { readAttesterThreshold, readDuelFromBase, submitVerdictToBase, verdictHash } from './base.js'
 import { loadConfig } from './config.js'
 import { readResolutionFromGenLayer } from './genlayer.js'
 import { getMetadata, getResolution, listMetadata, saveMetadata, saveResolution } from './storage.js'
@@ -10,6 +10,7 @@ const app = createRelayerApp({
   config,
   readResolutionFromGenLayer,
   readDuelFromBase,
+  readAttesterThreshold,
   storage: {
     getMetadata,
     getResolution,

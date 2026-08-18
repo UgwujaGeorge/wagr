@@ -11,6 +11,9 @@ export interface GenLayerResolutionResult {
 
 const GENLAYER_RECEIPT_WAIT_INTERVAL_MS = 5_000
 const GENLAYER_RECEIPT_WAIT_RETRIES = 84
+// Finalization waits out GenLayer's appeal window, which is far longer than
+// acceptance. An accepted-but-not-finalized verdict can still be overturned.
+const GENLAYER_FINALITY_WAIT_RETRIES = 360
 
 export async function readResolutionFromGenLayer(
   config: RelayerConfig,
@@ -27,15 +30,24 @@ export async function readResolutionFromGenLayer(
   })
 
   if (genlayerTxHash) {
+    // A verdict is only authorization once GenLayer itself considers it final.
+    // Waiting on ACCEPTED would let an appeal overturn the verdict after Base
+    // has already paid out.
+    const requireFinality = config.requireGenlayerFinality
     const receipt = await client.waitForTransactionReceipt({
       hash: genlayerTxHash as TransactionHash,
-      status: TransactionStatus.ACCEPTED,
+      status: requireFinality ? TransactionStatus.FINALIZED : TransactionStatus.ACCEPTED,
       interval: GENLAYER_RECEIPT_WAIT_INTERVAL_MS,
-      retries: GENLAYER_RECEIPT_WAIT_RETRIES,
+      retries: requireFinality ? GENLAYER_FINALITY_WAIT_RETRIES : GENLAYER_RECEIPT_WAIT_RETRIES,
     })
 
     if (getReceiptExecutionResultName(receipt) === ExecutionResult.FINISHED_WITH_ERROR) {
       throw new Error(`GenLayer resolution transaction failed: ${genlayerTxHash}`)
+    }
+    if (requireFinality && !isFinalizedReceipt(receipt)) {
+      throw new Error(
+        `GenLayer transaction ${genlayerTxHash} is not FINALIZED yet; refusing to attest an appealable verdict`,
+      )
     }
   }
 
@@ -125,6 +137,17 @@ function requireBytes32(value: unknown, label: string): `0x${string}` {
     throw new Error(`GenLayer resolver returned an invalid ${label}`)
   }
   return value.toLowerCase() as `0x${string}`
+}
+
+function isFinalizedReceipt(receipt: unknown): boolean {
+  if (!receipt || typeof receipt !== 'object') return false
+  const value = receipt as { status?: unknown; statusName?: unknown; status_name?: unknown }
+  for (const candidate of [value.status, value.statusName, value.status_name]) {
+    if (typeof candidate === 'string' && candidate.toUpperCase() === TransactionStatus.FINALIZED) {
+      return true
+    }
+  }
+  return false
 }
 
 function getReceiptExecutionResultName(receipt: unknown): string | undefined {
