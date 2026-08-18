@@ -1,5 +1,28 @@
 export type DuelSide = 'YES' | 'NO'
-export type DuelStatus = 'Open' | 'Active' | 'ResolutionRequested' | 'Resolved' | 'Invalid' | 'Canceled' | 'Paid'
+export type DuelStatus =
+  | 'Open'
+  | 'Active'
+  | 'ResolutionRequested'
+  | 'Resolved'
+  | 'Invalid'
+  | 'Canceled'
+  | 'Paid'
+  | 'VerdictProposed'
+  | 'Challenged'
+
+/** Index order must match `WagrDuelEscrow.DuelStatus`. */
+export const duelStatusNames = [
+  'None',
+  'Open',
+  'Active',
+  'ResolutionRequested',
+  'Resolved',
+  'Invalid',
+  'Canceled',
+  'Paid',
+  'VerdictProposed',
+  'Challenged',
+] as const
 export type Verdict = 'YES' | 'NO' | 'INVALID' | 'UNRESOLVED'
 
 export interface DuelMetadata {
@@ -7,6 +30,8 @@ export interface DuelMetadata {
   resolutionRules: string
   evidenceUrls: string[]
   allowedSourceTypes: string[]
+  /** Machine-enforced host allowlist; part of the onchain metadata commitment. */
+  allowedDomains: string[]
   category?: string
 }
 

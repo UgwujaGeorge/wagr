@@ -9,6 +9,7 @@ export const metadataSchema = z.object({
   resolutionRules: z.string().min(10),
   evidenceUrls: z.array(z.string().url()).min(1).max(5),
   allowedSourceTypes: z.array(z.string().min(2)).min(1),
+  allowedDomains: z.array(z.string().min(3)).min(1),
   category: z.string().optional(),
   expiryTime: z.string().min(1),
   creatorSide: z.enum(['YES', 'NO']),

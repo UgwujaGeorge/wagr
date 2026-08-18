@@ -1,6 +1,7 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 
+import hashlib
 import json
 
 
@@ -10,6 +11,7 @@ MAX_EVIDENCE_CHARS_PER_SOURCE = 12000
 MIN_DECISIVE_CONFIDENCE = 60
 CONFIDENCE_TOLERANCE = 15
 WAGR_RESOLUTION_SCOPE = "wagr.base.genlayer.v1"
+WAGR_METADATA_VERSION = "wagr.metadata.v1"
 
 
 class WagrResolver(gl.Contract):
@@ -30,6 +32,8 @@ class WagrResolver(gl.Contract):
         expiry_time: str,
         evidence_urls: list[str],
         allowed_source_types: list[str],
+        allowed_domains: list[str],
+        category: str,
         creator_side: str,
         counterparty_side: str,
         metadata_hash: str,
@@ -47,10 +51,41 @@ class WagrResolver(gl.Contract):
             raise gl.vm.UserError("Sides must be YES or NO")
         if creator_side == counterparty_side:
             raise gl.vm.UserError("Counterparty must take the opposite side")
-        if len(evidence_urls) == 0:
-            raise gl.vm.UserError("At least one evidence URL is required")
-        if len(evidence_urls) > MAX_EVIDENCE_URLS:
-            raise gl.vm.UserError("Too many evidence URLs")
+
+        # The onchain metadata hash is a commitment to the exact wager. Recompute
+        # it here from the arguments actually supplied, so a tampered relayer
+        # cannot get this contract to adjudicate a claim, rule set, evidence list
+        # or source policy that the participants never agreed to.
+        recomputed = self._metadata_commitment(
+            claim,
+            resolution_rules,
+            evidence_urls,
+            allowed_source_types,
+            allowed_domains,
+            category,
+        )
+        if recomputed != binding["metadata_hash"]:
+            raise gl.vm.UserError("Metadata does not match the committed metadata hash")
+
+        # Source policy is enforced deterministically, before any fetch, rather
+        # than being described to a model and hoped for.
+        policy_error = self._evidence_policy_error(evidence_urls, allowed_domains)
+        if policy_error is not None:
+            verdict = self._normalize_verdict_response(
+                {
+                    "verdict": "INVALID",
+                    "confidence": 0,
+                    "evidence_summary": "",
+                    "sources_checked": [],
+                    "reasoning": "The duel's committed evidence policy is not satisfiable.",
+                    "resolved_at": "",
+                    "invalid_reason": policy_error,
+                },
+                binding,
+            )
+            verdict_json = json.dumps(verdict, sort_keys=True)
+            self.resolutions[duel_id] = verdict_json
+            return verdict_json
 
         def leader_fn():
             evidence = []
@@ -74,6 +109,7 @@ class WagrResolver(gl.Contract):
                 expiry_time,
                 evidence,
                 allowed_source_types,
+                allowed_domains,
                 creator_side,
                 counterparty_side,
                 binding,
@@ -112,6 +148,7 @@ class WagrResolver(gl.Contract):
         expiry_time,
         evidence,
         allowed_source_types,
+        allowed_domains,
         creator_side,
         counterparty_side,
         binding,
@@ -146,6 +183,7 @@ class WagrResolver(gl.Contract):
                     "resolution_rules": resolution_rules,
                     "expiry_time": expiry_time,
                     "allowed_source_types": allowed_source_types,
+                    "allowed_domains": allowed_domains,
                     "creator_side": creator_side,
                     "counterparty_side": counterparty_side,
                     "resolution_scope": WAGR_RESOLUTION_SCOPE,
@@ -330,6 +368,76 @@ class WagrResolver(gl.Contract):
             },
             sort_keys=True,
         )
+
+    def _metadata_commitment(
+        self,
+        claim: str,
+        resolution_rules: str,
+        evidence_urls: list[str],
+        allowed_source_types: list[str],
+        allowed_domains: list[str],
+        category: str,
+    ) -> str:
+        """SHA-256 over the canonical metadata encoding.
+
+        Byte-identical to `canonicalDuelMetadata` in `shared/src/duelMetadata.ts`.
+        JSON is deliberately avoided: Python and JavaScript disagree on
+        non-ASCII escaping and separator defaults, which would silently break
+        the commitment. Every string is written as its UTF-8 byte length, a
+        colon, the raw text and a newline; every list is preceded by its length.
+        """
+        parts = [WAGR_METADATA_VERSION + "\n"]
+        parts.append(self._encode_field(claim))
+        parts.append(self._encode_field(resolution_rules))
+        parts.append(self._encode_list(evidence_urls))
+        parts.append(self._encode_list(allowed_source_types))
+        parts.append(self._encode_list(allowed_domains))
+        parts.append(self._encode_field(category))
+        canonical = "".join(parts)
+        return "0x" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _encode_field(self, value: str) -> str:
+        text = str(value)
+        return f"{len(text.encode('utf-8'))}:{text}\n"
+
+    def _encode_list(self, values: list[str]) -> str:
+        return f"{len(values)}\n" + "".join(self._encode_field(value) for value in values)
+
+    def _evidence_policy_error(self, evidence_urls: list[str], allowed_domains: list[str]):
+        """Deterministic mirror of `evidencePolicyError` in the shared package."""
+        if len(evidence_urls) == 0:
+            return "At least one evidence URL is required"
+        if len(evidence_urls) > MAX_EVIDENCE_URLS:
+            return f"At most {MAX_EVIDENCE_URLS} evidence URLs are allowed"
+        if len(allowed_domains) == 0:
+            return "Committed source policy has no allowed domains"
+
+        allowed = [domain.lower() for domain in allowed_domains]
+        for url in evidence_urls:
+            host = self._https_host(url)
+            if host is None:
+                return f"Evidence URL is not a valid https URL: {url}"
+            if host not in allowed:
+                return f"Evidence URL host is outside the committed source policy: {host}"
+        return None
+
+    def _https_host(self, url: str):
+        text = str(url)
+        if not text.lower().startswith("https://"):
+            return None
+        remainder = text[len("https://"):]
+        for separator in ("/", "?", "#"):
+            index = remainder.find(separator)
+            if index != -1:
+                remainder = remainder[:index]
+        # Strip userinfo and port; an empty or malformed authority is not a host.
+        if "@" in remainder:
+            remainder = remainder.split("@", 1)[1]
+        if ":" in remainder:
+            remainder = remainder.split(":", 1)[0]
+        if remainder == "" or "." not in remainder:
+            return None
+        return remainder.lower()
 
     def _binding_context(
         self,
