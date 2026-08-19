@@ -15,9 +15,9 @@ services:
       # devDependencies, which drops the typescript/@types/node needed to
       # compile. relayer/start.sh exports it at runtime instead.
       - key: BASE_SEPOLIA_RPC_URL
-        value: https://sepolia.base.org
+        value: https://base-sepolia-rpc.publicnode.com
       - key: BASE_MAINNET_RPC_URL
-        value: https://mainnet.base.org
+        value: https://base-rpc.publicnode.com
       - key: BASE_SEPOLIA_ESCROW_ADDRESS
         value: 0xA93956bc90698b4Bf9080085c9047F55625381aE
       - key: BASE_MAINNET_ESCROW_ADDRESS
@@ -59,9 +59,9 @@ services:
     healthCheckPath: /health
     envVars:
       - key: BASE_SEPOLIA_RPC_URL
-        value: https://sepolia.base.org
+        value: https://base-sepolia-rpc.publicnode.com
       - key: BASE_MAINNET_RPC_URL
-        value: https://mainnet.base.org
+        value: https://base-rpc.publicnode.com
       - key: BASE_SEPOLIA_ESCROW_ADDRESS
         value: 0xA93956bc90698b4Bf9080085c9047F55625381aE
       - key: BASE_MAINNET_ESCROW_ADDRESS
