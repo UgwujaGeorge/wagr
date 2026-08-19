@@ -67,7 +67,14 @@ export function deriveAllowedDomains(evidenceUrls: string[]): string[] {
   return [...domains].sort()
 }
 
-/** Lowercased host of an https URL, or undefined when the URL is unusable. */
+/**
+ * Lowercased host of a public https URL, or undefined when the URL is unusable.
+ *
+ * Mirrored by `_https_host` in the GenLayer resolver. The dot requirement keeps
+ * the two implementations identical: the resolver parses the authority by hand
+ * because GenVM has no URL parser, and a bare hostname like `localhost` is not
+ * a public evidence source in any case.
+ */
 export function evidenceUrlHost(url: string): string | undefined {
   let parsed: URL
   try {
@@ -76,7 +83,9 @@ export function evidenceUrlHost(url: string): string | undefined {
     return undefined
   }
   if (parsed.protocol !== 'https:') return undefined
-  return parsed.hostname.toLowerCase()
+  const host = parsed.hostname.toLowerCase()
+  if (host === '' || !host.includes('.')) return undefined
+  return host
 }
 
 /**

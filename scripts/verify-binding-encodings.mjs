@@ -13,7 +13,7 @@
  * against each other rather than re-deriving them.
  */
 import { execFileSync } from 'node:child_process'
-import { authenticatedDuelDataHash, duelMetadataHash } from '../shared/dist/index.js'
+import { authenticatedDuelDataHash, duelMetadataHash, evidenceUrlHost } from '../shared/dist/index.js'
 
 const metadataFixtures = [
   {
@@ -112,6 +112,36 @@ print("0x" + hashlib.sha256(canonical.encode("utf-8")).hexdigest())
   }).trim().toLowerCase()
 }
 
+const hostFixtures = [
+  'https://example.com/x',
+  'https://localhost/x',
+  'https://example.com@attacker.example/x',
+  'https://example.com:8443/x',
+  'https://1.2.3.4/x',
+  'http://example.com/x',
+  'https://sub.example.com/x',
+  'https://EXAMPLE.com/x',
+  'https://user:pw@example.com:443/x?q=1#f',
+  'not a url',
+]
+
+function pythonHosts(urls) {
+  const script = `
+import json, sys, importlib.util
+sys.path.insert(0, "genlayer/tests")
+import genlayer_stub
+sys.modules["genlayer"] = genlayer_stub
+spec = importlib.util.spec_from_file_location("wagr_resolver", "genlayer/contracts/wagr_resolver.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+r = mod.WagrResolver.__new__(mod.WagrResolver)
+print(json.dumps([r._https_host(u) for u in json.loads(sys.stdin.read())]))
+`
+  return JSON.parse(
+    execFileSync('python3', ['-c', script], { input: JSON.stringify(urls), encoding: 'utf8' }),
+  )
+}
+
 let failures = 0
 
 console.log('metadata commitment: TypeScript vs Python')
@@ -130,6 +160,17 @@ for (const [index, duel] of duelFixtures.entries()) {
   const ok = ts === sol
   if (!ok) failures++
   console.log(`  fixture ${index}: ${ok ? 'match' : 'MISMATCH'} ${ts}${ok ? '' : ` != ${sol}`}`)
+}
+
+console.log('evidence host parsing: TypeScript vs Python')
+{
+  const py = pythonHosts(hostFixtures)
+  hostFixtures.forEach((url, index) => {
+    const ts = evidenceUrlHost(url) ?? null
+    const ok = ts === py[index]
+    if (!ok) failures++
+    console.log(`  ${ok ? 'match   ' : 'MISMATCH'} ${url} -> ${ts}${ok ? '' : ` != ${py[index]}`}`)
+  })
 }
 
 if (failures > 0) {
