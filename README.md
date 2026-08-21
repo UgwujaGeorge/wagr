@@ -65,6 +65,71 @@ URLs must be `https`, must number between 1 and 5, and every host must appear in
 the committed `allowedDomains`. Out-of-policy evidence resolves `INVALID`
 without a single fetch, so it cannot be used as a prompt-injection vector.
 
+## The Authenticated Duel Data
+
+The wager is one half of what decides a duel. The other half is the duel state
+Base holds, and the expiry is the sharpest edge of it: "was the issue closed
+before expiry?" answers YES or NO depending entirely on that one number.
+
+`authenticatedDuelDataHash` is `keccak256` over nine fields, and it is exactly
+what `WagrDuelEscrow.duelStateHash(duelId)` computes from the escrow's own
+storage:
+
+| Field | Why it is in the hash |
+| --- | --- |
+| `chainId`, `escrowAddress` | An attestation for one deployment cannot replay on another |
+| `duelId` | Ties the verdict to one duel |
+| `creator`, `counterparty` | Neither participant can be swapped out |
+| `creatorSide` | The counterparty's side is derived from it, never supplied |
+| `stakeAmount` | The size of the wager is part of what was agreed |
+| `expiry` | The deadline the claim is judged against |
+| `metadataHash` | Pins the claim, rules, evidence and source policy |
+
+The GenLayer resolver **recomputes this hash from the arguments it was actually
+given** and refuses to go any further if the result differs from the hash it
+was handed. So every Base-derived value the model ever sees — the expiry, both
+sides, the participants, the stake, the escrow — is covered by a hash the
+attesters independently compare against live Base storage. Alter the expiry to
+steer the verdict and the hash changes; a hash `duelStateHash` does not produce
+is not attestable by anyone, and the duel stays resolvable.
+
+`resolve_duel` takes the expiry as a unix integer and renders the ISO string in
+the prompt itself, so the human-readable expiry the model reads and the integer
+inside the hash cannot disagree. That rendering is published on the verdict as
+`expiry_time`, and each attester checks it against Base in the clear as well as
+through the hash.
+
+GenVM has no Ethereum-compatible Keccak-256 — `hashlib` offers SHA-256 and NIST
+SHA-3, and SHA-3 differs from Keccak by a padding byte, which is enough to
+produce a hash that never matches Base. The resolver therefore carries its own
+Keccak-256, and `npm run verify:encodings` holds it against Solidity and viem
+on every run.
+
+### Resolution cannot start early
+
+A duel is only adjudicable once the outcome it predicts is due. `resolve_duel`
+reads the transaction's own pinned clock and rejects any call made before the
+authenticated expiry, before fetching a single page. Base enforces the same
+boundary independently: `markResolutionRequested` and `submitVerdict` both
+require `block.timestamp >= duel.expiry`.
+
+### Being first decides nothing
+
+`resolve_duel` is permissionless so that settlement never depends on one party
+staying online. That is only safe if being the caller confers nothing, so:
+
+- **Verdicts are stored per Base state, not per duel.** The storage key is the
+  duel ID *and* its authenticated duel data hash. A caller who invents duel
+  state occupies only the slot for the state they invented. Attesters read the
+  slot for the state Base actually holds, which stays resolvable.
+- **A non-final result never occupies the duel.** `UNRESOLVED` means "not yet"
+  — an unreachable evidence host, an unparseable model response — and can be
+  superseded by a later resolution. Only `YES`, `NO` and `INVALID` are frozen.
+  The alternative would let anyone who can make one evidence fetch fail force
+  both participants into a permanent refund.
+- **`resolved_at` comes from the transaction, not the model**, so the timestamp
+  on a verdict is not something the model can dictate.
+
 ## Verdict Authorization
 
 Base does not trust the relayer key. A verdict is only accepted when it carries
@@ -141,10 +206,10 @@ npm test
 That runs all four checks:
 
 ```bash
-npm run relayer:test      # 28 — commitment enforcement, quorum, attester behaviour
-npm run contracts:test    # 35 — escrow lifecycle, quorum authorization, challenge, timeout
-npm run genlayer:test     # 49 — resolver binding, metadata mutation, source policy
-npm run verify:encodings  #  5 — TypeScript vs Python vs Solidity encodings agree
+npm run relayer:test      # 34 — commitment enforcement, quorum, attester behaviour
+npm run contracts:test    # 43 — escrow lifecycle, quorum authorization, challenge, timeout
+npm run genlayer:test     # 91 — resolver binding, metadata mutation, source policy
+npm run verify:encodings  # 23 — TypeScript vs Python vs Solidity encodings agree
 ```
 
 The GenLayer suite runs the resolver offline against a stub of the GenVM runtime
@@ -159,6 +224,29 @@ non-attester signatures; the old relayer key acting alone; attestations replayed
 from another duel, another verdict, another metadata hash and another escrow
 deployment; unordered signatures; removed attesters; a non-finalized GenLayer
 transaction; disagreeing attesters; and challenge, escalation and timeout paths.
+
+On the two paths the steward asked about specifically:
+
+**Altered expiry.** The expiry pushed later, pulled earlier and moved by a
+single second; each rejected by the resolver before any fetch or prompt, and
+each leaving the duel resolvable afterwards. The same alterations to the stake,
+the creator side, either participant, the escrow address and the metadata hash.
+An expiry supplied as an ISO string instead of an integer. Attesters refusing a
+verdict whose duel data hash reflects an altered expiry, and refusing one whose
+`expiry_time` alone disagrees with Base. On Base: the duel state hash proven to
+commit to the expiry, an attestation over the real duel state accepted, the same
+attestation over an altered expiry rejected, and the duel still settling
+normally afterwards.
+
+**First-caller poisoning.** Resolution attempted before expiry — rejected,
+storing nothing, fetching nothing, and leaving the duel resolvable once expiry
+passes. A first caller resolving against invented Base state — their verdict is
+not returned for the real duel, and the real duel resolves on its own merits. A
+transient fetch failure and an unparseable model response — both superseded by a
+later resolution rather than freezing a refund. A final verdict — not
+overwritable. On Base: resolution requested before expiry rejected, a stranger
+requesting resolution after expiry changing nothing about how the duel settles,
+and the timeout refund still reachable afterwards.
 
 ## Local Setup
 
@@ -243,12 +331,22 @@ sign. Attesters then read `get_resolution_json(...)` and sign the Base verdict.
 `UNRESOLVED` results are submitted to Base as `INVALID` so both participants can
 refund; the original reason is preserved in the relayer record and shown in the
 app. The `No resolution stored for duel` sentinel is the exception — it means
-not-yet-resolved and is never submitted, so the duel can be retried.
+not-yet-resolved and is never submitted, so the duel can be retried. Because the
+resolver treats `UNRESOLVED` as replaceable, resolving again is worth trying
+before accepting the refund.
 
 ```bash
 npm run genlayer:schema   # inspect the deployed resolver
 npm run genlayer:deploy   # only when the resolver changes
 ```
+
+`resolve_duel` and `get_resolution_json` both changed shape when the
+authenticated duel data binding went in, so the resolver has to be redeployed
+and `GENLAYER_RESOLVER_ADDRESS` updated on Render and Vercel before the new
+frontend and relayer will work. The escrows are unchanged and do not need
+redeploying. `WAGR_RESOLUTION_SCOPE` moved to `wagr.base.genlayer.v2` at the
+same time, so a verdict from the old resolver — adjudicated with an expiry
+nothing checked — can never satisfy a current attester.
 
 ## Known Trust Boundaries
 
