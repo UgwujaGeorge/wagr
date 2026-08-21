@@ -23,7 +23,7 @@ GenLayer remains on StudioNet:
 - Network: `StudioNet`
 - RPC: `https://studio.genlayer.com/api`
 - Explorer: `https://explorer-studio.genlayer.com`
-- Resolver: `0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e`
+- Resolver: `0xfbCf2a7f6db786F03bc7391D6ea2ae05d7EF0340`
 
 Base Sepolia is the default network. Base Mainnet is selectable and uses real
 funds; the frontend shows a Mainnet badge and warnings.

@@ -19,9 +19,9 @@
   },
   "genlayer": {
     "network": "StudioNet",
-    "resolverContract": "0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e",
-    "deployedAt": "2026-08-19",
-    "supersedes": "0xa7976eAc9eE972C371b01B085D365Cea09d84DaD"
+    "resolverContract": "0xfbCf2a7f6db786F03bc7391D6ea2ae05d7EF0340",
+    "deployedAt": "2026-08-21",
+    "supersedes": "0xC3E076B3CA2407D4Cf30E03E960232D1A764A08e"
   },
   "attesters": {
     "threshold": 2,
