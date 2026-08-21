@@ -32,6 +32,12 @@ contract WagrDuelEscrowTest {
     uint256 private constant CHALLENGE_WINDOW = 1 hours;
     uint256 private constant GRACE_PERIOD = 3 days;
 
+    /// Reimplemented rather than read from the contract, so a change to the
+    /// signed struct has to be made deliberately in two places.
+    bytes32 private constant VERDICT_TYPEHASH = keccak256(
+        "Verdict(uint256 duelId,uint8 verdict,uint16 confidenceBps,bytes32 metadataHash,bytes32 authenticatedDuelDataHash,bytes32 verdictHash,bytes32 genlayerTxHash)"
+    );
+
     bytes32 private constant META = keccak256("wagr metadata");
     bytes32 private constant VERDICT_HASH = keccak256("genlayer verdict");
     bytes32 private constant GENLAYER_TX = keccak256("genlayer tx");
@@ -322,6 +328,120 @@ contract WagrDuelEscrowTest {
         escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.No, 8_500, META, VERDICT_HASH, GENLAYER_TX, signatures);
     }
 
+    // ----------------------------------------------------- expiry binding
+
+    /// The expiry is inside the data attesters sign, not alongside it.
+    function testDuelStateHashCommitsToTheExpiry() public {
+        uint256 duelId = _activeExpiredDuel();
+        WagrDuelEscrow.Duel memory duel = escrow.getDuel(duelId);
+
+        assertEq(escrow.duelStateHash(duelId), _duelStateHashWithExpiry(duelId, duel, duel.expiry));
+        assertNotEq(escrow.duelStateHash(duelId), _duelStateHashWithExpiry(duelId, duel, duel.expiry + 1));
+        assertNotEq(escrow.duelStateHash(duelId), _duelStateHashWithExpiry(duelId, duel, duel.expiry + 30 days));
+    }
+
+    /// Proves the hand-built digest below really is the one the escrow checks,
+    /// so the altered-expiry rejection that follows is about the expiry and
+    /// not about a mis-assembled struct.
+    function testAttestationOverTheRealDuelStateIsAccepted() public {
+        uint256 duelId = _activeExpiredDuel();
+        WagrDuelEscrow.Duel memory duel = escrow.getDuel(duelId);
+
+        bytes32 digest = _digestOver(duelId, _duelStateHashWithExpiry(duelId, duel, duel.expiry));
+        bytes[] memory signatures = _signSorted(_twoAttesters(), digest);
+
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH, GENLAYER_TX, signatures);
+        assertEq(uint256(escrow.getDuel(duelId).status), uint256(WagrDuelEscrow.DuelStatus.VerdictProposed));
+    }
+
+    /// An attester that judged the duel against a later expiry -- the
+    /// difference between "closed before Friday" and "closed before next
+    /// month" -- produces a signature this escrow cannot recognize at all.
+    function testAttestationOverAnAlteredExpiryIsRejected() public {
+        uint256 duelId = _activeExpiredDuel();
+        WagrDuelEscrow.Duel memory duel = escrow.getDuel(duelId);
+
+        bytes32 digest = _digestOver(duelId, _duelStateHashWithExpiry(duelId, duel, duel.expiry + 30 days));
+        bytes[] memory signatures = _signSorted(_twoAttesters(), digest);
+
+        vm.expectRevert(WagrDuelEscrow.NotAnAttester.selector);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH, GENLAYER_TX, signatures);
+    }
+
+    function testAttestationOverAnEarlierExpiryIsRejected() public {
+        uint256 duelId = _activeExpiredDuel();
+        WagrDuelEscrow.Duel memory duel = escrow.getDuel(duelId);
+
+        bytes32 digest = _digestOver(duelId, _duelStateHashWithExpiry(duelId, duel, duel.expiry - 1));
+        bytes[] memory signatures = _signSorted(_twoAttesters(), digest);
+
+        vm.expectRevert(WagrDuelEscrow.NotAnAttester.selector);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH, GENLAYER_TX, signatures);
+    }
+
+    /// A rejected altered-expiry submission must not consume the duel's one
+    /// shot at settlement.
+    function testDuelStillSettlesAfterAnAlteredExpirySubmissionFails() public {
+        uint256 duelId = _activeExpiredDuel();
+        WagrDuelEscrow.Duel memory duel = escrow.getDuel(duelId);
+
+        bytes32 forged = _digestOver(duelId, _duelStateHashWithExpiry(duelId, duel, duel.expiry + 30 days));
+        bytes[] memory forgedSignatures = _signSorted(_twoAttesters(), forged);
+        vm.expectRevert(WagrDuelEscrow.NotAnAttester.selector);
+        escrow.submitVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, META, VERDICT_HASH, GENLAYER_TX, forgedSignatures);
+
+        _proposeVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, _twoAttesters());
+        _passChallengeWindow();
+        escrow.finalizeVerdict(duelId);
+        assertEq(uint256(escrow.getDuel(duelId).status), uint256(WagrDuelEscrow.DuelStatus.Resolved));
+    }
+
+    // ------------------------------------------------- public caller safety
+
+    function testResolutionCannotBeRequestedBeforeExpiry() public {
+        uint256 duelId = _openDuel();
+        vm.prank(counterparty);
+        escrow.acceptDuel{value: 1 ether}(duelId);
+
+        vm.prank(stranger);
+        vm.expectRevert(WagrDuelEscrow.DuelNotExpired.selector);
+        escrow.markResolutionRequested(duelId);
+    }
+
+    /// Requesting resolution is permissionless on purpose, so settlement never
+    /// depends on one party staying online. Being the caller must therefore
+    /// confer nothing: the duel settles exactly as it would have.
+    function testStrangerRequestingResolutionDoesNotOccupyTheDuel() public {
+        uint256 duelId = _openDuel();
+        vm.prank(counterparty);
+        escrow.acceptDuel{value: 1 ether}(duelId);
+        vm.warp(escrow.getDuel(duelId).expiry + 1);
+
+        vm.prank(stranger);
+        escrow.markResolutionRequested(duelId);
+
+        _proposeVerdict(duelId, WagrDuelEscrow.Verdict.Yes, 8_500, _twoAttesters());
+        _passChallengeWindow();
+        escrow.finalizeVerdict(duelId);
+
+        uint256 before = creator.balance;
+        vm.prank(creator);
+        escrow.claimPayout(duelId);
+        assertEq(creator.balance, before + 2 ether);
+    }
+
+    /// And a stranger who requests resolution cannot strand the stakes either:
+    /// the timeout refund is still reachable from ResolutionRequested.
+    function testStrangerRequestedDuelStillTimesOut() public {
+        uint256 duelId = _activeExpiredDuel();
+        vm.warp(block.timestamp + GRACE_PERIOD + 1);
+
+        vm.prank(stranger);
+        escrow.markResolutionTimedOut(duelId);
+
+        assertEq(uint256(escrow.getDuel(duelId).status), uint256(WagrDuelEscrow.DuelStatus.Invalid));
+    }
+
     // -------------------------------------------------------- challenge path
 
     function testProposedVerdictIsNotClaimableDuringWindow() public {
@@ -563,11 +683,58 @@ contract WagrDuelEscrowTest {
         }
     }
 
+    /// The duel state hash the escrow would produce if the expiry were
+    /// `expiry`, rebuilt from the same nine fields rather than borrowed.
+    function _duelStateHashWithExpiry(uint256 duelId, WagrDuelEscrow.Duel memory duel, uint256 expiry)
+        private
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                block.chainid,
+                address(escrow),
+                duelId,
+                duel.creator,
+                duel.counterparty,
+                uint8(duel.creatorSide),
+                duel.stakeAmount,
+                expiry,
+                duel.metadataHash
+            )
+        );
+    }
+
+    /// The EIP-712 digest for a YES verdict over an arbitrary duel state hash.
+    function _digestOver(uint256 duelId, bytes32 duelStateHash) private view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                VERDICT_TYPEHASH,
+                duelId,
+                uint8(WagrDuelEscrow.Verdict.Yes),
+                uint16(8_500),
+                META,
+                duelStateHash,
+                VERDICT_HASH,
+                GENLAYER_TX
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", escrow.domainSeparator(), structHash));
+    }
+
     function assertEq(uint256 actual, uint256 expected) private pure {
         require(actual == expected, "assertEq(uint256) failed");
     }
 
     function assertEq(address actual, address expected) private pure {
         require(actual == expected, "assertEq(address) failed");
+    }
+
+    function assertEq(bytes32 actual, bytes32 expected) private pure {
+        require(actual == expected, "assertEq(bytes32) failed");
+    }
+
+    function assertNotEq(bytes32 actual, bytes32 unexpected) private pure {
+        require(actual != unexpected, "assertNotEq(bytes32) failed");
     }
 }
