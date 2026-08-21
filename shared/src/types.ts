@@ -49,6 +49,8 @@ export interface GenLayerVerdict {
   base_duel_id: string
   metadata_hash: string
   authenticated_duel_data_hash: string
+  /** The Base expiry the resolver adjudicated against, as `YYYY-MM-DDTHH:MM:SSZ`. */
+  expiry_time: string
   verdict: Verdict
   confidence: number
   evidence_summary: string

@@ -1,4 +1,5 @@
 import {
+  authenticatedDuelDataHash,
   baseChainNames,
   baseMainnet,
   baseSepolia,
@@ -35,6 +36,7 @@ export interface RelayerAppDeps {
   readResolutionFromGenLayer(
     config: RelayerConfig,
     duelId: string,
+    authenticatedDuelDataHash: `0x${string}`,
     genlayerTxHash?: `0x${string}`,
   ): Promise<{ verdict: GenLayerVerdict; genlayerTxHash?: `0x${string}` }>
   storage: RelayerStorage
@@ -222,6 +224,7 @@ export function createRelayerApp(deps: RelayerAppDeps) {
       const { verdict } = await deps.readResolutionFromGenLayer(
         config,
         canonicalGenLayerDuelId(chainId, duelId),
+        authenticatedDuelDataHash(baseDuel),
         genlayerTxHash,
       )
 

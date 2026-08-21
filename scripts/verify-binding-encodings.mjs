@@ -5,15 +5,47 @@
  *
  * 1. `duelMetadataHash` must be identical in TypeScript (frontend + relayer)
  *    and in Python (the GenLayer resolver).
- * 2. `authenticatedDuelDataHash` must be identical in TypeScript and in
- *    Solidity's `WagrDuelEscrow.duelStateHash`.
+ * 2. `authenticatedDuelDataHash` must be identical in TypeScript, in Python
+ *    (the resolver recomputes it to bind the expiry and every other
+ *    Base-derived prompt input) and in Solidity's
+ *    `WagrDuelEscrow.duelStateHash`. The resolver carries its own Keccak-256
+ *    because GenVM's `hashlib` has no Ethereum-compatible one, so this is the
+ *    check that keeps that implementation honest.
+ * 3. `expiryTimeIso` must be identical in TypeScript and Python, because the
+ *    attester compares the expiry the resolver adjudicated against with the
+ *    expiry Base holds as plain strings.
+ * 4. The argument tuple `genlayerResolveArgs` builds must be the one
+ *    `resolve_duel` expects. These are positional arguments crossing a
+ *    language boundary, so a reordering would typecheck, deploy, and only fail
+ *    against the live resolver.
  *
  * A silent divergence in either would break resolution in a way no
  * single-language test suite can see, so this runs the real implementations
  * against each other rather than re-deriving them.
  */
 import { execFileSync } from 'node:child_process'
-import { authenticatedDuelDataHash, duelMetadataHash, evidenceUrlHost } from '../shared/dist/index.js'
+import {
+  authenticatedDuelDataHash,
+  duelMetadataHash,
+  evidenceUrlHost,
+  expiryTimeIso,
+  genlayerResolveArgs,
+} from '../shared/dist/index.js'
+
+/** Runs a snippet against the real resolver module, with the GenVM stub in place. */
+function inResolver(body) {
+  return `
+import json, sys, importlib.util
+sys.path.insert(0, "genlayer/tests")
+import genlayer_stub
+sys.modules["genlayer"] = genlayer_stub
+spec = importlib.util.spec_from_file_location("wagr_resolver", "genlayer/contracts/wagr_resolver.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+resolver = mod.WagrResolver.__new__(mod.WagrResolver)
+${body}
+`
+}
 
 const metadataFixtures = [
   {
@@ -112,6 +144,10 @@ print("0x" + hashlib.sha256(canonical.encode("utf-8")).hexdigest())
   }).trim().toLowerCase()
 }
 
+// Epoch, a whole minute, a second that is not, a leap day, and a far-future
+// expiry: the cases where a millisecond suffix or an offset would show up.
+const expiryFixtures = [0, 1790000000, 1790000001, 1709164800, 1999999999, 4102444800]
+
 const hostFixtures = [
   'https://example.com/x',
   'https://localhost/x',
@@ -126,19 +162,47 @@ const hostFixtures = [
 ]
 
 function pythonHosts(urls) {
-  const script = `
-import json, sys, importlib.util
-sys.path.insert(0, "genlayer/tests")
-import genlayer_stub
-sys.modules["genlayer"] = genlayer_stub
-spec = importlib.util.spec_from_file_location("wagr_resolver", "genlayer/contracts/wagr_resolver.py")
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-r = mod.WagrResolver.__new__(mod.WagrResolver)
-print(json.dumps([r._https_host(u) for u in json.loads(sys.stdin.read())]))
-`
+  const script = inResolver('print(json.dumps([resolver._https_host(u) for u in json.loads(sys.stdin.read())]))')
   return JSON.parse(
     execFileSync('python3', ['-c', script], { input: JSON.stringify(urls), encoding: 'utf8' }),
+  )
+}
+
+function pythonDuelStateHash(duel) {
+  const script = inResolver(`
+d = json.loads(sys.stdin.read())
+print(resolver._authenticated_duel_data_hash(
+    d["chainId"], d["escrowAddress"], d["duelId"], d["creator"], d["counterparty"],
+    d["creatorSide"], int(d["stakeAmountWei"]), int(d["expiry"]), d["metadataHash"],
+))
+`)
+  return execFileSync('python3', ['-c', script], {
+    input: JSON.stringify(duel),
+    encoding: 'utf8',
+  }).trim().toLowerCase()
+}
+
+function pythonBindingContext(args) {
+  // A reordered tuple makes `_binding_context` raise rather than return, so the
+  // error is reported as a mismatch instead of a Python traceback.
+  const script = inResolver(`
+args = json.loads(sys.stdin.read())
+try:
+    print(json.dumps(resolver._binding_context(*args[:11])))
+except Exception as error:
+    print(json.dumps({"error": str(error)}))
+`)
+  return JSON.parse(
+    execFileSync('python3', ['-c', script], { input: JSON.stringify(args), encoding: 'utf8' }),
+  )
+}
+
+function pythonExpiryIso(timestamps) {
+  const script = inResolver(
+    'print(json.dumps([resolver._format_timestamp(t) for t in json.loads(sys.stdin.read())]))',
+  )
+  return JSON.parse(
+    execFileSync('python3', ['-c', script], { input: JSON.stringify(timestamps), encoding: 'utf8' }),
   )
 }
 
@@ -153,13 +217,49 @@ for (const [index, metadata] of metadataFixtures.entries()) {
   console.log(`  fixture ${index}: ${ok ? 'match' : 'MISMATCH'} ${ts}${ok ? '' : ` != ${py}`}`)
 }
 
-console.log('duel state hash: TypeScript vs Solidity abi.encode')
+console.log('duel state hash: TypeScript vs Python vs Solidity abi.encode')
 for (const [index, duel] of duelFixtures.entries()) {
   const ts = authenticatedDuelDataHash(duel).toLowerCase()
   const sol = castKeccakOfAbiEncode(duel)
-  const ok = ts === sol
+  const py = pythonDuelStateHash(duel)
+  const ok = ts === sol && ts === py
   if (!ok) failures++
-  console.log(`  fixture ${index}: ${ok ? 'match' : 'MISMATCH'} ${ts}${ok ? '' : ` != ${sol}`}`)
+  console.log(
+    `  fixture ${index}: ${ok ? 'match' : 'MISMATCH'} ${ts}${ok ? '' : ` != solidity ${sol} / python ${py}`}`,
+  )
+}
+
+console.log('expiry rendering: TypeScript vs Python')
+{
+  const py = pythonExpiryIso(expiryFixtures)
+  expiryFixtures.forEach((timestamp, index) => {
+    const ts = expiryTimeIso(timestamp)
+    const ok = ts === py[index]
+    if (!ok) failures++
+    console.log(`  ${ok ? 'match   ' : 'MISMATCH'} ${timestamp} -> ${ts}${ok ? '' : ` != ${py[index]}`}`)
+  })
+}
+
+console.log('resolve_duel arguments: TypeScript call site vs Python signature')
+for (const [index, duel] of duelFixtures.entries()) {
+  const args = genlayerResolveArgs(duel, metadataFixtures[index])
+  const binding = pythonBindingContext(args)
+  const problems = []
+  if (binding.error) problems.push(binding.error)
+  if (binding.authenticated_duel_data_hash !== authenticatedDuelDataHash(duel).toLowerCase()) {
+    problems.push('duel data hash')
+  }
+  if (binding.expiry_time !== expiryTimeIso(duel.expiry)) problems.push('expiry')
+  if (binding.creator_side !== duel.creatorSide) problems.push('creator side')
+  if (binding.counterparty_side !== duel.counterpartySide) problems.push('counterparty side')
+  if (binding.stake_amount_wei !== duel.stakeAmountWei) problems.push('stake')
+  if (binding.base_escrow_address !== duel.escrowAddress.toLowerCase()) problems.push('escrow')
+  if (binding.creator !== duel.creator.toLowerCase()) problems.push('creator')
+  if (binding.counterparty !== duel.counterparty.toLowerCase()) problems.push('counterparty')
+  if (problems.length > 0) failures++
+  console.log(
+    `  fixture ${index}: ${problems.length === 0 ? 'the resolver reads every argument as sent' : `MISMATCH on ${problems.join(', ')}`}`,
+  )
 }
 
 console.log('evidence host parsing: TypeScript vs Python')

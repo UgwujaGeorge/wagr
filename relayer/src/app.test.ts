@@ -3,6 +3,7 @@ import {
   baseSepolia,
   canonicalGenLayerDuelId,
   duelMetadataHash,
+  expiryTimeIso,
   verdictAttestationTypedData,
   WAGR_RESOLUTION_SCOPE,
   type AuthenticatedDuelData,
@@ -113,6 +114,7 @@ function createVerdict(
     base_duel_id: duelId,
     metadata_hash: committedHash,
     authenticated_duel_data_hash: authenticatedDuelDataHash(baseDuel),
+    expiry_time: expiryTimeIso(baseDuel.expiry),
     verdict,
     confidence,
     evidence_summary: 'summary',
@@ -151,6 +153,7 @@ interface AppOptions {
   baseDuel?: AuthenticatedDuelData
   threshold?: number
   onSubmit?: (args: unknown[]) => void
+  onGenLayerRead?: (authenticatedDuelDataHash: `0x${string}`) => void
   fetchImpl?: typeof fetch
   readDuelFromBase?: RelayerAppDeps['readDuelFromBase']
   readResolutionFromGenLayer?: RelayerAppDeps['readResolutionFromGenLayer']
@@ -167,10 +170,13 @@ function createApp(options: AppOptions = {}) {
       (async (_config, chainId, duelId) => options.baseDuel ?? createBaseDuel(duelId.toString(), { chainId })),
     readResolutionFromGenLayer:
       options.readResolutionFromGenLayer ??
-      (async () => ({
-        verdict: options.verdict ?? createVerdict('YES', 90, '1'),
-        genlayerTxHash: validGenLayerTxHash,
-      })),
+      (async (_config, _duelId, duelDataHash) => {
+        options.onGenLayerRead?.(duelDataHash)
+        return {
+          verdict: options.verdict ?? createVerdict('YES', 90, '1'),
+          genlayerTxHash: validGenLayerTxHash,
+        }
+      }),
     readAttesterThreshold: async () => options.threshold ?? 1,
     submitVerdictToBase: async (...args) => {
       options.onSubmit?.(args as unknown[])
@@ -478,6 +484,129 @@ test('the attester endpoint rejects a mismatched authenticated duel data hash', 
 
   assert.equal(response.status, 400)
   assert.match((await response.json()).error, /authenticated duel data hash does not match/)
+})
+
+// ======================================== expiry and duel-state binding
+
+test('the attester asks GenLayer only for the verdict bound to the Base state it read', async () => {
+  const baseDuel = createBaseDuel('1')
+  let requested: `0x${string}` | undefined
+  const { app } = createApp({ baseDuel, onGenLayerRead: (hash) => { requested = hash } })
+
+  const response = await post(app, '/attest', {
+    chainId: baseSepolia.id,
+    duelId: '1',
+    metadata: createMetadata('1'),
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 200)
+  // A verdict adjudicated against any other duel state is not reachable from
+  // this read at all, so a first caller who invented Base state cannot occupy
+  // the slot an attester looks in.
+  assert.equal(requested, authenticatedDuelDataHash(baseDuel))
+})
+
+test('the attester endpoint refuses a verdict adjudicated against an altered expiry', async () => {
+  const baseDuel = createBaseDuel('1')
+  // The resolver was handed an expiry a month later than the one Base holds --
+  // the difference between "closed before Friday" and "closed before next month".
+  const alteredExpiry = { ...baseDuel, expiry: String(Number(baseDuel.expiry) + 30 * 86400) }
+  const { app } = createApp({
+    baseDuel,
+    verdict: createVerdict('YES', 90, '1', {
+      authenticated_duel_data_hash: authenticatedDuelDataHash(alteredExpiry),
+      expiry_time: expiryTimeIso(alteredExpiry.expiry),
+    }),
+  })
+
+  const response = await post(app, '/attest', {
+    chainId: baseSepolia.id,
+    duelId: '1',
+    metadata: createMetadata('1'),
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /authenticated duel data hash does not match/)
+})
+
+test('the attester endpoint refuses a verdict whose expiry alone disagrees with Base', async () => {
+  // Belt and braces: even if a resolver somehow produced the right duel data
+  // hash, the expiry it says it judged against is checked in the clear.
+  const baseDuel = createBaseDuel('1')
+  const { app } = createApp({
+    baseDuel,
+    verdict: createVerdict('YES', 90, '1', { expiry_time: '2030-01-01T00:00:00Z' }),
+  })
+
+  const response = await post(app, '/attest', {
+    chainId: baseSepolia.id,
+    duelId: '1',
+    metadata: createMetadata('1'),
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /adjudicated against expiry 2030-01-01T00:00:00Z/)
+})
+
+test('a verdict from the superseded v1 resolution scope is never attested', async () => {
+  const { app } = createApp({
+    verdict: createVerdict('YES', 90, '1', { resolution_scope: 'wagr.base.genlayer.v1' }),
+  })
+
+  const response = await post(app, '/attest', {
+    chainId: baseSepolia.id,
+    duelId: '1',
+    metadata: createMetadata('1'),
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /Wagr Base resolution scope/)
+})
+
+test('an altered-expiry verdict is never submitted to Base', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('1'))
+  const baseDuel = createBaseDuel('1')
+  const alteredExpiry = { ...baseDuel, expiry: String(Number(baseDuel.expiry) + 30 * 86400) }
+  let submitted = false
+  const { app } = createApp({
+    storage,
+    baseDuel,
+    verdict: createVerdict('YES', 90, '1', {
+      authenticated_duel_data_hash: authenticatedDuelDataHash(alteredExpiry),
+      expiry_time: expiryTimeIso(alteredExpiry.expiry),
+    }),
+    onSubmit: () => {
+      submitted = true
+    },
+  })
+
+  const response = await post(app, '/resolve/1', {
+    chainId: baseSepolia.id,
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /No attester signed this verdict/)
+  assert.equal(submitted, false)
+})
+
+test('stored metadata whose expiry drifts from Base blocks resolution', async () => {
+  const storage = createMemoryStorage()
+  await storage.saveMetadata(createMetadata('1', { expiryTime: '2030-06-01T00:00:00.000Z' }))
+  const { app } = createApp({ storage })
+
+  const response = await post(app, '/resolve/1', {
+    chainId: baseSepolia.id,
+    genlayerTxHash: validGenLayerTxHash,
+  })
+
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /expiry does not match the Base duel expiry/)
 })
 
 test('the attester endpoint enforces its auth token', async () => {

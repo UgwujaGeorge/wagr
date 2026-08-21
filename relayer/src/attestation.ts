@@ -3,6 +3,7 @@ import {
   canonicalGenLayerDuelId,
   duelMetadataHash,
   evidencePolicyError,
+  expiryTimeIso,
   verdictAttestationTypedData,
   WAGR_RESOLUTION_SCOPE,
   type AttestableVerdict,
@@ -36,6 +37,7 @@ export interface AttestationDeps {
   readResolutionFromGenLayer(
     config: RelayerConfig,
     duelId: string,
+    authenticatedDuelDataHash: `0x${string}`,
     genlayerTxHash?: `0x${string}`,
   ): Promise<{ verdict: GenLayerVerdict; genlayerTxHash?: `0x${string}` }>
   verdictHash(verdict: unknown): `0x${string}`
@@ -98,9 +100,14 @@ export async function verifyAndSignAttestation(
   }
 
   // 3. The GenLayer verdict must be finalized and bound to this exact duel.
+  // The resolver is asked for the verdict it reached against this precise Base
+  // state, so a verdict adjudicated against any other state is not returned at
+  // all rather than being returned and rejected afterwards.
+  const duelDataHash = authenticatedDuelDataHash(baseDuel)
   const { verdict } = await deps.readResolutionFromGenLayer(
     config,
     canonicalGenLayerDuelId(request.chainId, request.duelId),
+    duelDataHash,
     request.genlayerTxHash,
   )
   assertVerdictBinding(verdict, baseDuel, recomputed)
@@ -116,7 +123,7 @@ export async function verifyAndSignAttestation(
       verdict: baseVerdict,
       confidenceBps,
       metadataHash: recomputed,
-      authenticatedDuelDataHash: authenticatedDuelDataHash(baseDuel),
+      authenticatedDuelDataHash: duelDataHash,
       verdictHash,
       genlayerTxHash: request.genlayerTxHash,
     }),
@@ -170,5 +177,14 @@ export function assertVerdictBinding(
   const expectedDuelDataHash = authenticatedDuelDataHash(baseDuel)
   if (verdict.authenticated_duel_data_hash.toLowerCase() !== expectedDuelDataHash.toLowerCase()) {
     throw new Error('GenLayer verdict authenticated duel data hash does not match Base')
+  }
+  // The resolver derives this string from the expiry inside the hash above, so
+  // this is redundant by construction -- and that is the point. If a resolver
+  // ever adjudicated against an expiry Base did not set, it shows up here as a
+  // plain readable mismatch rather than only as a hash that fails to match.
+  if (verdict.expiry_time !== expiryTimeIso(baseDuel.expiry)) {
+    throw new Error(
+      `GenLayer verdict was adjudicated against expiry ${verdict.expiry_time}, but Base holds ${expiryTimeIso(baseDuel.expiry)}`,
+    )
   }
 }

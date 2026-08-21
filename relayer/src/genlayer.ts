@@ -18,6 +18,7 @@ const GENLAYER_FINALITY_WAIT_RETRIES = 360
 export async function readResolutionFromGenLayer(
   config: RelayerConfig,
   duelId: string,
+  authenticatedDuelDataHash: `0x${string}`,
   genlayerTxHash?: `0x${string}`,
 ): Promise<GenLayerResolutionResult> {
   if (!config.genlayerResolverAddress) {
@@ -51,10 +52,13 @@ export async function readResolutionFromGenLayer(
     }
   }
 
+  // The resolver stores one verdict per (duel, exact Base state) pair, so the
+  // state being asked about is named in the read itself. A verdict adjudicated
+  // against duel data Base does not hold is not reachable from here at all.
   const resolutionJson = await client.readContract({
     address: config.genlayerResolverAddress,
     functionName: 'get_resolution_json',
-    args: [duelId],
+    args: [duelId, authenticatedDuelDataHash],
   })
 
   if (typeof resolutionJson !== 'string') {
@@ -90,6 +94,7 @@ function parseGenLayerVerdict(value: string): GenLayerVerdict {
       base_duel_id: '',
       metadata_hash: '',
       authenticated_duel_data_hash: '',
+      expiry_time: '',
       verdict,
       confidence,
       evidence_summary: String(parsed.evidence_summary || ''),
@@ -107,6 +112,7 @@ function parseGenLayerVerdict(value: string): GenLayerVerdict {
     base_duel_id: requireString(parsed.base_duel_id, 'Base duel ID'),
     metadata_hash: requireBytes32(parsed.metadata_hash, 'metadata hash'),
     authenticated_duel_data_hash: requireBytes32(parsed.authenticated_duel_data_hash, 'authenticated duel data hash'),
+    expiry_time: requireString(parsed.expiry_time, 'expiry time'),
     verdict,
     confidence,
     evidence_summary: String(parsed.evidence_summary || ''),

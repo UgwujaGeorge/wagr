@@ -2,6 +2,8 @@ import {
   authenticatedDuelDataHash,
   canonicalGenLayerDuelId,
   duelMetadataHash,
+  expiryTimeIso,
+  genlayerResolveArgs,
   type AuthenticatedDuelData,
   type GenLayerVerdict,
 } from '@wagr/shared'
@@ -75,36 +77,37 @@ export async function resolveOnGenLayer(
   if (duelMetadataHash(toCommitted(metadata)).toLowerCase() !== metadata.metadataHash.toLowerCase()) {
     throw new Error('Relayer metadata does not match its own committed hash')
   }
+  // The expiry shown in the app comes from the relayer; the one the resolver is
+  // bound to comes from Base. They must be the same expiry.
+  const baseExpiry = expiryTimeIso(authenticatedDuel.expiry)
+  if (baseExpiry !== expiryTimeIso(Math.floor(new Date(metadata.expiryTime).getTime() / 1000))) {
+    throw new Error(`Relayer metadata expiry does not match the Base duel expiry of ${baseExpiry}`)
+  }
+  // The resolver refuses to adjudicate before expiry, because a verdict reached
+  // over evidence that has not happened yet would be a wrong answer nobody can
+  // replace. Say so here rather than sending a transaction that must revert.
+  if (Date.now() < Number(authenticatedDuel.expiry) * 1000) {
+    throw new Error(`This duel cannot be resolved until it expires at ${baseExpiry}.`)
+  }
   const duelDataHash = authenticatedDuelDataHash(authenticatedDuel)
 
-  // GenLayer rejects a second resolve_duel for the same duel. If a previous
-  // attempt resolved on GenLayer but never reached Base, resolving again would
-  // fail here and leave the duel permanently stuck, so reuse the stored verdict
-  // and let the caller retry only the Base submission.
-  const existing = await readStoredVerdict(readClient, config, genlayerDuelId)
-  if (existing && verdictMatchesDuel(existing, genlayerDuelId, duelDataHash, metadata.metadataHash)) {
+  // The resolver refuses a second resolve_duel once it holds a final verdict
+  // for this duel under this exact Base state. If a previous attempt resolved
+  // on GenLayer but never reached Base, resolving again would fail, so reuse
+  // the stored verdict and let the caller retry only the Base submission. An
+  // UNRESOLVED result is not final and is deliberately retried instead.
+  const existing = await readStoredVerdict(readClient, config, genlayerDuelId, duelDataHash)
+  if (existing && existing.verdict !== 'UNRESOLVED' && verdictMatchesDuel(existing, genlayerDuelId, duelDataHash, metadata.metadataHash)) {
     return { verdict: existing, alreadyResolved: true }
   }
 
   const txHash = await writeClient.writeContract({
     address: config.genlayerResolverAddress,
     functionName: 'resolve_duel',
-    args: [
-      genlayerDuelId,
-      metadata.chainId,
-      metadata.duelId,
-      duelDataHash,
-      metadata.claim,
-      metadata.resolutionRules,
-      metadata.expiryTime,
-      metadata.evidenceUrls,
-      metadata.allowedSourceTypes,
-      metadata.allowedDomains,
-      metadata.category || '',
-      metadata.creatorSide,
-      metadata.counterpartySide,
-      metadata.metadataHash,
-    ],
+    // Built from the authenticated Base duel, never from the relayer's copy of
+    // the expiry or the sides: the resolver recomputes duelDataHash from these
+    // very arguments and rejects anything Base does not vouch for.
+    args: [...genlayerResolveArgs(authenticatedDuel, toCommitted(metadata))],
     value: 0n,
   })
 
@@ -122,7 +125,7 @@ export async function resolveOnGenLayer(
   const resolutionJson = await readClient.readContract({
     address: config.genlayerResolverAddress,
     functionName: 'get_resolution_json',
-    args: [genlayerDuelId],
+    args: [genlayerDuelId, duelDataHash],
   })
 
   if (typeof resolutionJson !== 'string') {
@@ -153,12 +156,13 @@ async function readStoredVerdict(
   readClient: GenLayerReadClient,
   config: GenLayerConfig,
   genlayerDuelId: string,
+  duelDataHash: `0x${string}`,
 ): Promise<GenLayerVerdict | undefined> {
   try {
     const resolutionJson = await readClient.readContract({
       address: config.genlayerResolverAddress as `0x${string}`,
       functionName: 'get_resolution_json',
-      args: [genlayerDuelId],
+      args: [genlayerDuelId, duelDataHash],
     })
     if (typeof resolutionJson !== 'string') return undefined
     return parseGenLayerVerdict(resolutionJson)
@@ -286,6 +290,7 @@ function parseGenLayerVerdict(value: string): GenLayerVerdict {
     base_duel_id: String(parsed.base_duel_id || ''),
     metadata_hash: String(parsed.metadata_hash || ''),
     authenticated_duel_data_hash: String(parsed.authenticated_duel_data_hash || ''),
+    expiry_time: String(parsed.expiry_time || ''),
     verdict,
     confidence: Number(parsed.confidence || 0),
     evidence_summary: String(parsed.evidence_summary || ''),
